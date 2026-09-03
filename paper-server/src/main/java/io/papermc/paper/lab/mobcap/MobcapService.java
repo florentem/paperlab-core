@@ -133,6 +133,9 @@ public final class MobcapService {
         ServerPlayer worst = null;
         for (int i = 0; i < len; i++) {
             final ServerPlayer candidate = raw[i];
+            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(candidate)) {
+                continue; // наблюдатель не режет бюджет — не показываем его и как ограничителя
+            }
             final int diff = limit - level.getChunkSource().chunkMap.getMobCountNear(candidate, category);
             if (diff < minDiff) {
                 minDiff = diff;

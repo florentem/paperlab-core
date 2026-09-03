@@ -65,10 +65,34 @@ index 05fcc3328436109b5aa4e2cef9bda799b4d3e1ff..ed42a0b7bdd2c6af9cf0496d822b15cb
          this.playerList.tick();
          profiler.popPush("debugSubscribers");
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
-index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..e78c36cf3b1464005d4f85ef1a4be0cb15f9be48 100644
+index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..b4c6c6220a992a516ef428b7d503830e76864455 100644
 --- a/net/minecraft/server/level/ChunkMap.java
 +++ b/net/minecraft/server/level/ChunkMap.java
-@@ -892,6 +892,11 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+@@ -253,6 +253,7 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+ 
+         final ServerPlayer[] backingSet = inRange.getRawDataUnchecked();
+         for (int i = 0, len = inRange.size(); i < len; i++) {
++            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[i])) { continue; } // Paper Lab - наблюдатель вне мобкапа
+             ++(backingSet[i].mobCounts[index]);
+         }
+     }
+@@ -270,6 +271,7 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+         }
+         final ServerPlayer[] backingSet = inRange.getRawDataUnchecked();
+         for (int i = 0, len = inRange.size(); i < len; i++) {
++            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[i])) { continue; } // Paper Lab - наблюдатель вне мобкапа
+             ++(backingSet[i].mobBackoffCounts[idx]);
+         }
+     }
+@@ -728,6 +730,7 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+             if (event == null || event.isCancelled()) {
+                 continue;
+             }
++            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(raw[i])) { continue; } // Paper Lab - наблюдатель не расширяет область спавна
+             double blockRange = (double) ((event.getSpawnRadius() << 4) * (event.getSpawnRadius() << 4));
+             if (chunkMap.playerIsCloseEnoughForSpawning(raw[i], chunkPos, blockRange)) {
+                 // Paper end - PlayerNaturallySpawnCreaturesEvent
+@@ -892,6 +895,11 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
      }
  
      private boolean skipPlayer(final ServerPlayer player) {
@@ -154,6 +178,18 @@ index 3a4da514c163e7565fc241835db52c464a5c4734..7323913b6518b70ed53613f49e70f5a0
          return !this.isSpectator() && this.isAlive();
      }
  
+diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
+index e193cbed115663e9ca7a611837d5b8540dda03db..d448ab2c671f3644074598939672c9c2513ab789 100644
+--- a/net/minecraft/world/level/NaturalSpawner.java
++++ b/net/minecraft/world/level/NaturalSpawner.java
+@@ -181,6 +181,7 @@ public final class NaturalSpawner {
+                 if (inRange != null) {
+                     final net.minecraft.server.level.ServerPlayer[] backingSet = inRange.getRawDataUnchecked();
+                     for (int k = 0, len = inRange.size(); k < len; k++) {
++                        if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[k])) { continue; } // Paper Lab - наблюдатель не режет бюджет
+                         minDiff = Math.min(limit - level.getChunkSource().chunkMap.getMobCountNear(backingSet[k], mobCategory), minDiff);
+                     }
+                 }
 diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
 index fef616d7b92454a721f7a14941b62a8963080cc5..84ef0b5cc75b2542c3bbabe7d6b92319b10010f2 100644
 --- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java

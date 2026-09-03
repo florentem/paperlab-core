@@ -24,9 +24,15 @@ import net.minecraft.world.entity.Entity;
  *       ровно тот же путь, которым Paper уже игнорирует spectator'ов при выключенном
  *       {@code spectatorsGenerateChunks}. Игрок не попадает ни в {@code DistanceManager},
  *       ни в ticking-трекер.</li>
- *   <li><b>Мобкап и радиус спавна</b> — игрок исключается из {@code NearbyPlayers}.
- *       Оттуда данные берут и перепись мобкапа, и вычисление бюджета чанка, и отбор
- *       чанков-кандидатов для спавна, и запросы на entity-ticking.</li>
+ *   <li><b>Мобкап и радиус спавна</b> — игрок пропускается в четырёх местах чтения:
+ *       перепись {@code ChunkMap.updatePlayerMobTypeMap}, начисление backoff
+ *       {@code updateFailurePlayerMobTypeMap}, поиск минимального остатка в
+ *       {@code NaturalSpawner.spawnForChunk} и отбор чанков в {@code isChunkNearPlayer}.
+ *       <p><b>Удалять игрока из {@code NearbyPlayers} нельзя</b>, хотя это и выглядит
+ *       как одна точка вместо четырёх. Карта управляется жизненным циклом сущности:
+ *       {@code tickPlayer} на каждом перемещении бросает
+ *       {@code IllegalStateException: Don't have player}, а вместе с этим ломается
+ *       трекинг сущностей — игрок перестаёт видеть остальных. Проверено на живом сервере.</li>
  *   <li><b>Деспавн, позиция спавна, trial spawner</b> — через штатный флаг Paper
  *       {@code Player.affectsSpawning}. Патч не нужен: его уже проверяют
  *       {@code EntitySelector.PLAYER_AFFECTS_SPAWNING} и
@@ -81,14 +87,6 @@ public final class LabGhost {
 
         // Штатный флаг Paper: деспавн, выбор позиции спавна, trial spawner.
         player.affectsSpawning = !ghost;
-
-        // Убираем из nearby-множеств Moonrise: мобкап, радиус спавна, ticking-запросы.
-        final var nearby = level.moonrise$getNearbyPlayers();
-        if (ghost) {
-            nearby.removePlayer(player);
-        } else {
-            nearby.addPlayer(player);
-        }
 
         // Пересчитать участие в загрузке чанков: skipPlayer теперь отвечает иначе,
         // поэтому игрока надо провести через штатный путь обновления.
