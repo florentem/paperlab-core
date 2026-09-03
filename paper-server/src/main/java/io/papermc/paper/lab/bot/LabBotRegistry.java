@@ -1,16 +1,13 @@
 package io.papermc.paper.lab.bot;
 
 import com.mojang.authlib.GameProfile;
-import io.papermc.paper.lab.Lab;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import net.minecraft.core.UUIDUtil;
-import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
@@ -53,8 +50,11 @@ public final class LabBotRegistry {
         }
         // Копия: doTick() может привести к удалению бота (смерть, кик).
         for (final LabBot bot : new ArrayList<>(BOTS.values())) {
-            if (bot.isRemoved() || bot.hasDisconnected()) {
-                BOTS.remove(bot.labName().toLowerCase(Locale.ROOT));
+            // Мёртвый бот некому респавнить: у него нет клиента, который пришлёт
+            // ServerboundClientCommandPacket. Без этого он остаётся призраком в таб-листе,
+            // поэтому убираем его штатным путём.
+            if (bot.isDeadOrDying() || bot.isRemoved() || bot.hasDisconnected()) {
+                remove(bot.labName());
                 continue;
             }
             try {
@@ -78,10 +78,8 @@ public final class LabBotRegistry {
                                          final Vec3 pos,
                                          final float yaw,
                                          final float pitch,
-                                         final GameType gameMode) {
-        if (!Lab.mode().mayIntervene()) {
-            return "боты доступны только в режиме CONTROL (сейчас " + Lab.mode().name() + ")";
-        }
+                                         final GameType gameMode,
+                                         final boolean flying) {
         if (name.isBlank() || name.length() > 16) {
             return "имя бота должно быть от 1 до 16 символов";
         }
@@ -113,6 +111,8 @@ public final class LabBotRegistry {
         bot.teleportTo(level, pos.x, pos.y, pos.z, java.util.Set.of(), yaw, pitch, true);
         bot.setHealth(bot.getMaxHealth());
         bot.gameMode.changeGameModeForPlayer(gameMode);
+        bot.getAbilities().flying = flying;
+        bot.onUpdateAbilities();
         // Шаг по умолчанию: без этого бот может застревать на полублоках.
         final var stepHeight = bot.getAttribute(Attributes.STEP_HEIGHT);
         if (stepHeight != null) {
@@ -169,33 +169,5 @@ public final class LabBotRegistry {
         return BOTS.size();
     }
 
-    /**
-     * Сообщение для {@code /paper lab bot list}.
-     */
-    public static List<String> describeAll() {
-        if (BOTS.isEmpty()) {
-            return Collections.singletonList("ботов нет");
-        }
-        final List<String> out = new ArrayList<>(BOTS.size());
-        for (final LabBot bot : BOTS.values()) {
-            out.add(String.format(Locale.ROOT,
-                "%s | %s | %.1f %.1f %.1f | чанк %d,%d | %s | здоровье %.1f",
-                bot.labName(),
-                bot.level().getWorld().getName(),
-                bot.getX(), bot.getY(), bot.getZ(),
-                bot.chunkPosition().x(), bot.chunkPosition().z(),
-                bot.gameMode.getGameModeForPlayer().getName(),
-                bot.getHealth()));
-        }
-        return out;
-    }
 
-    /**
-     * Диагностика: сообщение о том, что бот не эталон игрока.
-     */
-    public static Component equivalenceDisclaimer() {
-        return Component.literal(
-            "бот — настоящий ServerPlayer с заглушкой соединения; порядок doTick/tick совпадает "
-                + "с живым игроком, но эквивалентность НЕ доказана и требует отдельных тестов");
-    }
 }

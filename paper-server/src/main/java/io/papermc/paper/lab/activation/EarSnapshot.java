@@ -123,33 +123,22 @@ public record EarSnapshot(
     }
 
     /**
-     * Строка для {@code /lab ear}.
+     * Одна короткая строка.
      */
-    public String describe() {
-        final StringBuilder sb = new StringBuilder(160);
-        sb.append(this.entityType).append(" | EAR-категория ").append(this.activationType.name());
-        sb.append('\n');
+    public String line() {
         if (!this.entityTicking) {
-            sb.append("  чанк НЕ entity-ticking: сущность заморожена, EAR не проверяется вообще")
-                .append('\n')
-                .append("  (ни tick(), ни inactiveTick(); внешнее воздействие поршнем или взрывом всё ещё возможно)");
-            return sb.toString();
+            return this.entityType + " frozen (chunk not entity-ticking)";
         }
-        sb.append("  entity-ticking: да | состояние: ")
-            .append(this.active ? "активна (полный tick)" : "неактивна (inactiveTick)");
+        final StringBuilder sb = new StringBuilder(48);
+        sb.append(this.entityType).append(' ')
+            .append(this.active ? "active" : "inactive");
         if (this.temporarilyActive) {
-            sb.append(" [контрольный полный тик, самостоятельное перемещение блокировано]");
+            sb.append(" (probe tick)");
         }
-        sb.append('\n');
         if (this.hardImmunity != HardImmunity.NONE) {
-            sb.append("  безусловный иммунитет: ").append(this.hardImmunity.description()).append('\n');
-        }
-        sb.append("  activatedTick ").append(this.activatedTick == Integer.MIN_VALUE ? "не задан" : this.activatedTick)
-            .append(" | currentTick ").append(this.currentTick)
-            .append(" | осталось активности ").append(this.ticksRemaining).append(" ticks");
-        if (this.hardImmunity == HardImmunity.NONE && !this.active) {
-            sb.append('\n')
-                .append("  окна пробуждения (checkEntityImmunities) не запрашивались: у проверки есть побочные эффекты");
+            sb.append(" [").append(this.hardImmunity.name().toLowerCase(java.util.Locale.ROOT)).append(']');
+        } else if (this.active) {
+            sb.append(" ").append(this.ticksRemaining).append("t");
         }
         return sb.toString();
     }

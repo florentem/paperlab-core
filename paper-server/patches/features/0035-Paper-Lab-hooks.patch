@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Creker <TheoFool@proton.me>
+Date: Thu, 3 Sep 2026 22:41:11 +0200
+Subject: [PATCH] Paper Lab hooks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Единственная точка вмешательства форка в патч-систему. Держим одним патчем,
+чтобы каждый новый lab-модуль не добавлял очередной номер в серию.
+
+MinecraftServer.tickChildren после tickConnection():
+  - LabBotRegistry.tickConnectionPhase() — doTick ботов в той же фазе и в том же
+    порядке относительно tick(), что у живого игрока (levels -> connection -> players);
+  - LabHud.tick() — обновление подписок /log в таб-листе.
+
+ServerChunkCache.tickChunks: три метки SpawnPhaseTracker
+  (BEFORE_CENSUS / AFTER_CENSUS / AFTER_SPAWN).
+
+Commands: регистрация /log, /player, /counter.
+
+HopperBlockEntity.ejectItems: LabCounters.consume() — воронка, направленная
+в шерсть, учитывает и уничтожает содержимое.
+
+diff --git a/net/minecraft/commands/Commands.java b/net/minecraft/commands/Commands.java
+index c4396509584011a5bbc171510478e8e62ce44d94..e00bb7463cd08124a2953935139fc9ea0daf811a 100644
+--- a/net/minecraft/commands/Commands.java
++++ b/net/minecraft/commands/Commands.java
+@@ -258,6 +258,9 @@ public class Commands {
+         TellRawCommand.register(this.dispatcher, context);
+         TestCommand.register(this.dispatcher, context);
+         TickCommand.register(this.dispatcher);
++        io.papermc.paper.lab.command.LabLogCommand.register(this.dispatcher); // Paper Lab
++        io.papermc.paper.lab.command.LabPlayerCommand.register(this.dispatcher); // Paper Lab
++        io.papermc.paper.lab.command.LabCounterCommand.register(this.dispatcher); // Paper Lab
+         TimeCommand.register(this.dispatcher, context);
+         TitleCommand.register(this.dispatcher, context);
+         TriggerCommand.register(this.dispatcher);
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 05fcc3328436109b5aa4e2cef9bda799b4d3e1ff..61ab648f044fb7890db69d4ae8954bc4c4030cf8 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1836,6 +1836,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+         profiler.popPush("connection");
+         this.tickConnection();
++        io.papermc.paper.lab.bot.LabBotRegistry.tickConnectionPhase(); // Paper Lab - боты: doTick в фазе соединений, как у живого игрока
++        io.papermc.paper.lab.log.LabHud.tick(this); // Paper Lab - подписки /log в таб-лист
+         profiler.popPush("players");
+         this.playerList.tick();
+         profiler.popPush("debugSubscribers");
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index 075e294333115738b25b64a390df323276cf39f9..7689ac59503eeec419b6dc55e251d0e4fe24f952 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -534,6 +534,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+ 
+     private void tickChunks(final ProfilerFiller profiler, final long timeDiff) {
+         profiler.push("naturalSpawnCount");
++        io.papermc.paper.lab.SpawnPhaseTracker.mark(this.level, io.papermc.paper.lab.SpawnPhase.BEFORE_CENSUS); // Paper Lab - метка фазы
+         int chunkCount = this.distanceManager.getNaturalSpawnChunkCount();
+         // Paper start - Optional per player mob spawns
+         NaturalSpawner.SpawnState spawnCookie;
+@@ -557,6 +558,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+             spawnCookie = NaturalSpawner.createState(chunkCount, this.level.getAllEntities(), this::getFullChunk, !this.level.paperConfig().entities.spawning.perPlayerMobSpawns ? new LocalMobCapCalculator(this.chunkMap) : null, false);
+         }
+         // Paper end - Optional per player mob spawns
++        io.papermc.paper.lab.SpawnPhaseTracker.mark(this.level, io.papermc.paper.lab.SpawnPhase.AFTER_CENSUS); // Paper Lab - метка фазы
+         this.lastSpawnState = spawnCookie;
+         boolean doMobSpawning = this.level.getGameRules().get(GameRules.SPAWN_MOBS) && !this.level.players().isEmpty(); // CraftBukkit
+         int tickSpeed = this.level.getGameRules().get(GameRules.RANDOM_TICK_SPEED);
+@@ -593,6 +595,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+             }
+         } finally {
+             spawningChunks.clear();
++            io.papermc.paper.lab.SpawnPhaseTracker.mark(this.level, io.papermc.paper.lab.SpawnPhase.AFTER_SPAWN); // Paper Lab - метка фазы
+         }
+ 
+         profiler.popPush("tickTickingChunks");
+diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+index fef616d7b92454a721f7a14941b62a8963080cc5..84ef0b5cc75b2542c3bbabe7d6b92319b10010f2 100644
+--- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+@@ -418,6 +418,10 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     // Paper end - Perf: Optimize Hoppers
+ 
+     private static boolean ejectItems(final Level level, final BlockPos blockPos, final HopperBlockEntity self) {
++        // Paper Lab - счётчик: воронка в шерсть учитывает и уничтожает содержимое
++        if (io.papermc.paper.lab.counter.LabCounters.consume(level, blockPos, level.getBlockState(blockPos), self)) {
++            return true;
++        }
+         Container container = getAttachedContainer(level, blockPos, self);
+         if (container == null) {
+             return false;

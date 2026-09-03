@@ -180,6 +180,118 @@ public final class MobcapService {
         return level.paperConfig().entities.spawning.countAllMobsForSpawning;
     }
 
+
+    /**
+     * Короткий код категории для HUD.
+     */
+    public static String shortCode(final MobCategory category) {
+        return switch (category) {
+            case MONSTER -> "M";
+            case CREATURE -> "A";
+            case AMBIENT -> "Am";
+            case AXOLOTLS -> "Ax";
+            case UNDERGROUND_WATER_CREATURE -> "Uw";
+            case WATER_CREATURE -> "W";
+            case WATER_AMBIENT -> "Wa";
+            case MISC -> "Ms";
+        };
+    }
+
+    /**
+     * Одна запись HUD-строки мобкапа.
+     *
+     * @param code  короткий код категории
+     * @param value отображаемое число: {@code "70"} либо {@code "70+2"}, если backoff не ноль
+     * @param used  эффективная занятость для раскраски
+     * @param limit действующий лимит
+     */
+    public record HudEntry(String code, String value, int used, int limit) {
+    }
+
+    /**
+     * Записи для HUD. Порядок фиксирован, категории без лимита пропускаются.
+     *
+     * @param local {@code true} — локальный кап игрока; {@code false} — мировой снимок движка
+     */
+    public static List<HudEntry> hudEntries(final ServerPlayer player,
+                                            final ServerLevel level,
+                                            final boolean local) {
+        final List<HudEntry> out = new ArrayList<>(HUD_ORDER.length);
+        for (final MobCategory category : HUD_ORDER) {
+            final SpawnCategory spawnCategory = CraftSpawnCategory.toBukkit(category);
+            if (!CraftSpawnCategory.isValidForLimits(spawnCategory)) {
+                continue;
+            }
+            final int limit = level.getWorld().getSpawnLimit(spawnCategory);
+            if (limit <= 0) {
+                continue;
+            }
+            final int counted;
+            final int backoff;
+            if (local) {
+                final int index = category.ordinal();
+                counted = player.mobCounts[index];
+                backoff = player.mobBackoffCounts[index];
+            } else {
+                final net.minecraft.world.level.NaturalSpawner.SpawnState state =
+                    level.getChunkSource().getLastSpawnState();
+                counted = state == null ? -1 : state.getMobCategoryCounts().getOrDefault(category, -1);
+                backoff = 0;
+            }
+            if (counted < 0) {
+                continue;
+            }
+            final String value = backoff > 0 ? (counted + "+" + backoff) : Integer.toString(counted);
+            out.add(new HudEntry(shortCode(category), value, counted + backoff, limit));
+        }
+        return out;
+    }
+
+    private static final MobCategory[] HUD_ORDER = {
+        MobCategory.MONSTER,
+        MobCategory.CREATURE,
+        MobCategory.AMBIENT,
+        MobCategory.WATER_CREATURE,
+        MobCategory.WATER_AMBIENT,
+        MobCategory.UNDERGROUND_WATER_CREATURE,
+        MobCategory.AXOLOTLS,
+    };
+
+
+    /**
+     * Кап монстров — единственная категория, которая нужна для ферм.
+     *
+     * @param counted   учтённые движком мобы
+     * @param backoff   штраф за неудачные попытки спавна; это не живые мобы
+     * @param limit     действующий лимит из bukkit.yml
+     */
+    public record MonsterCap(int counted, int backoff, int limit) {
+
+        /** Ровно то, что движок вычитает из лимита: {@code getMobCountNear}. */
+        public int effective() {
+            return this.counted + this.backoff;
+        }
+    }
+
+    public static MonsterCap monsterCap(final ServerPlayer player,
+                                        final ServerLevel level,
+                                        final boolean local) {
+        final MobCategory category = MobCategory.MONSTER;
+        final SpawnCategory spawnCategory = CraftSpawnCategory.toBukkit(category);
+        final int limit = CraftSpawnCategory.isValidForLimits(spawnCategory)
+            ? level.getWorld().getSpawnLimit(spawnCategory)
+            : category.getMaxInstancesPerChunk();
+
+        if (local) {
+            final int index = category.ordinal();
+            return new MonsterCap(player.mobCounts[index], player.mobBackoffCounts[index], limit);
+        }
+        final net.minecraft.world.level.NaturalSpawner.SpawnState state =
+            level.getChunkSource().getLastSpawnState();
+        final int counted = state == null ? 0 : Math.max(0, state.getMobCategoryCounts().getOrDefault(category, 0));
+        return new MonsterCap(counted, 0, limit);
+    }
+
     /**
      * Быстрая проверка, что сбор данных разрешён текущим режимом.
      */
