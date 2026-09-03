@@ -4,6 +4,7 @@ import io.papermc.paper.command.PaperSubcommand;
 import io.papermc.paper.lab.Lab;
 import io.papermc.paper.lab.LabMode;
 import io.papermc.paper.lab.activation.EarSnapshot;
+import io.papermc.paper.lab.bot.LabBotRegistry;
 import io.papermc.paper.lab.chunk.ChunkStatusProbe;
 import io.papermc.paper.lab.mobcap.MobcapService;
 import io.papermc.paper.lab.mobcap.MobcapSnapshot;
@@ -18,6 +19,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.GameType;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
@@ -52,8 +54,9 @@ public final class LabCommand implements PaperSubcommand {
             case "mobcaps" -> this.mobcaps(sender, rest);
             case "ear" -> this.ear(sender);
             case "chunk", "chunks" -> this.chunk(sender, rest);
+            case "bot", "bots" -> this.bot(sender, rest);
             default -> sender.sendMessage(Component.text(
-                "Неизвестное действие. Доступно: status, mode, mobcaps, ear, chunk", NamedTextColor.RED));
+                "Неизвестное действие. Доступно: status, mode, mobcaps, ear, chunk, bot", NamedTextColor.RED));
         }
         return true;
     }
@@ -61,10 +64,16 @@ public final class LabCommand implements PaperSubcommand {
     @Override
     public List<String> tabComplete(final CommandSender sender, final String subCommand, final String[] args) {
         if (args.length <= 1) {
-            return List.of("status", "mode", "mobcaps", "ear", "chunk");
+            return List.of("status", "mode", "mobcaps", "ear", "chunk", "bot");
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("mode")) {
             return Arrays.stream(LabMode.values()).map(Enum::name).toList();
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("bot")) {
+            return List.of("spawn", "remove", "removeall", "list");
+        }
+        if (args.length == 3 && args[0].equalsIgnoreCase("bot") && args[1].equalsIgnoreCase("remove")) {
+            return LabBotRegistry.bots().stream().map(io.papermc.paper.lab.bot.LabBot::labName).toList();
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("mobcaps")) {
             return Bukkit.getOnlinePlayers().stream().map(Player::getName).map(s -> (String) s).toList();
@@ -229,6 +238,88 @@ public final class LabCommand implements PaperSubcommand {
 
         sender.sendMessage(Component.text(
             ChunkStatusProbe.describe(level, playerChunk, playerChunk), NamedTextColor.AQUA));
+    }
+
+
+    private void bot(final CommandSender sender, final String[] args) {
+        final String action = args.length == 0 ? "list" : args[0].toLowerCase(Locale.ROOT);
+        switch (action) {
+            case "list" -> {
+                sender.sendMessage(Component.text(
+                    "Боты (" + LabBotRegistry.count() + "):", NamedTextColor.GOLD));
+                for (final String line : LabBotRegistry.describeAll()) {
+                    sender.sendMessage(Component.text("  " + line, NamedTextColor.WHITE));
+                }
+            }
+            case "spawn" -> {
+                if (args.length < 2) {
+                    sender.sendMessage(Component.text(
+                        "Нужно имя: /paper lab bot spawn <имя> [x y z]", NamedTextColor.RED));
+                    return;
+                }
+                if (!(sender instanceof Player self) && args.length < 5) {
+                    sender.sendMessage(Component.text(
+                        "Из консоли нужны координаты: /paper lab bot spawn <имя> <x> <y> <z>",
+                        NamedTextColor.RED));
+                    return;
+                }
+                final ServerLevel level;
+                final net.minecraft.world.phys.Vec3 pos;
+                final float yaw;
+                final float pitch;
+                if (args.length >= 5) {
+                    final Player ref = sender instanceof Player p ? p : Bukkit.getOnlinePlayers()
+                        .stream().findFirst().orElse(null);
+                    final org.bukkit.World world = ref != null ? ref.getWorld() : Bukkit.getWorlds().get(0);
+                    level = ((org.bukkit.craftbukkit.CraftWorld) world).getHandle();
+                    try {
+                        pos = new net.minecraft.world.phys.Vec3(
+                            Double.parseDouble(args[2]), Double.parseDouble(args[3]), Double.parseDouble(args[4]));
+                    } catch (final NumberFormatException e) {
+                        sender.sendMessage(Component.text("Координаты должны быть числами", NamedTextColor.RED));
+                        return;
+                    }
+                    yaw = 0.0F;
+                    pitch = 0.0F;
+                } else {
+                    final ServerPlayer handle = ((CraftPlayer) sender).getHandle();
+                    level = handle.level();
+                    pos = handle.position();
+                    yaw = handle.getYRot();
+                    pitch = handle.getXRot();
+                }
+
+                final String error = LabBotRegistry.spawn(
+                    level.getServer(), args[1], level, pos, yaw, pitch, GameType.SURVIVAL);
+                if (error != null) {
+                    sender.sendMessage(Component.text("Не удалось: " + error, NamedTextColor.RED));
+                    return;
+                }
+                sender.sendMessage(Component.text("Бот '" + args[1] + "' создан", NamedTextColor.GREEN));
+                sender.sendMessage(Component.text(
+                    "  порядок doTick/tick совпадает с живым игроком, но эквивалентность НЕ доказана "
+                        + "— нужны отдельные тесты lifecycle, tickets, мобкапа и боя",
+                    NamedTextColor.DARK_GRAY));
+            }
+            case "remove" -> {
+                if (args.length < 2) {
+                    sender.sendMessage(Component.text(
+                        "Нужно имя: /paper lab bot remove <имя>", NamedTextColor.RED));
+                    return;
+                }
+                if (LabBotRegistry.remove(args[1])) {
+                    sender.sendMessage(Component.text("Бот '" + args[1] + "' удалён", NamedTextColor.GREEN));
+                } else {
+                    sender.sendMessage(Component.text("Бот не найден: " + args[1], NamedTextColor.RED));
+                }
+            }
+            case "removeall" -> {
+                final int removed = LabBotRegistry.removeAll();
+                sender.sendMessage(Component.text("Удалено ботов: " + removed, NamedTextColor.GREEN));
+            }
+            default -> sender.sendMessage(Component.text(
+                "Доступно: spawn, remove, removeall, list", NamedTextColor.RED));
+        }
     }
 
     private static int parseIntOr(final String raw, final int fallback) {
