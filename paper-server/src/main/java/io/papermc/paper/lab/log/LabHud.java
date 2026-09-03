@@ -65,6 +65,9 @@ public final class LabHud {
         for (final String option : LabLoggers.COUNTER.optionsFor(name)) {
             lines.addAll(counterLines(player, option));
         }
+        for (final String option : LabLoggers.SPAWN.optionsFor(name)) {
+            lines.add(spawnLine(player, option));
+        }
         return lines;
     }
 
@@ -202,6 +205,59 @@ public final class LabHud {
             }
         }
         return out;
+    }
+
+    /**
+     * Трасса спавна: где останавливаются попытки.
+     *
+     * <p>Формат: {@code spawn monster  попыток 812 · позиция 780 · плагин 0 · заспавнено 32 · кап 4410}.
+     * Числа накопительные с момента подписки — так видно соотношение причин, а не шум
+     * за один тик.
+     */
+    private static Component spawnLine(final ServerPlayer viewer, final String option) {
+        final String categoryName = option == null || option.isBlank() ? "monster" : option.trim();
+        net.minecraft.world.entity.MobCategory category = null;
+        for (final net.minecraft.world.entity.MobCategory value : net.minecraft.world.entity.MobCategory.values()) {
+            if (value.getName().equalsIgnoreCase(categoryName)) {
+                category = value;
+                break;
+            }
+        }
+        if (category == null) {
+            return Component.literal("spawn: нет категории " + categoryName).withStyle(ChatFormatting.DARK_GRAY);
+        }
+
+        final long[] counts = io.papermc.paper.lab.spawn.SpawnTrace.snapshot(viewer.level(), category);
+        final MutableComponent line = Component.empty()
+            .append(Component.literal("spawn ").withStyle(ChatFormatting.GRAY))
+            .append(Component.literal(category.getName() + "  ").withStyle(ChatFormatting.DARK_GRAY));
+        if (counts == null) {
+            return line.append(Component.literal("нет попыток").withStyle(ChatFormatting.DARK_GRAY));
+        }
+
+        boolean first = true;
+        for (final io.papermc.paper.lab.spawn.SpawnTrace.Outcome outcome
+            : io.papermc.paper.lab.spawn.SpawnTrace.Outcome.values()) {
+            final long value = counts[outcome.ordinal()];
+            if (!first) {
+                line.append(Component.literal(" · ").withStyle(ChatFormatting.DARK_GRAY));
+            }
+            first = false;
+            line.append(Component.literal(outcome.label() + " ").withStyle(ChatFormatting.DARK_GRAY));
+            line.append(Component.literal(Long.toString(value)).withStyle(colourFor(outcome, value)));
+        }
+        return line;
+    }
+
+    private static ChatFormatting colourFor(final io.papermc.paper.lab.spawn.SpawnTrace.Outcome outcome,
+                                            final long value) {
+        return switch (outcome) {
+            case SPAWNED -> value > 0 ? ChatFormatting.GREEN : ChatFormatting.DARK_GRAY;
+            // Отмена плагином — единственная причина, которой в чистой ванили быть не должно.
+            case PLUGIN -> value > 0 ? ChatFormatting.RED : ChatFormatting.DARK_GRAY;
+            case CAP_FULL -> value > 0 ? ChatFormatting.GOLD : ChatFormatting.DARK_GRAY;
+            default -> ChatFormatting.WHITE;
+        };
     }
 
     /** Зелёный → жёлтый → красный по заполненности. */

@@ -127,6 +127,9 @@ public final class LabLogCommand {
 
         if (option != null && option.equalsIgnoreCase("clear")) {
             logger.unsubscribeAll(playerName);
+            if (logger == LabLoggers.SPAWN) {
+                io.papermc.paper.lab.spawn.SpawnTrace.setEnabled(LabLoggers.SPAWN.hasSubscribers());
+            }
             refresh(player);
             source.sendSuccess(() -> Component.literal(logger.name() + " off")
                 .withStyle(ChatFormatting.DARK_GRAY), false);
@@ -141,6 +144,11 @@ public final class LabLogCommand {
         }
 
         final boolean on = logger.toggle(playerName, option);
+        // Сбор трассы спавна стоит в горячем пути, поэтому включаем его только
+        // пока на логгер кто-то подписан.
+        if (logger == LabLoggers.SPAWN) {
+            io.papermc.paper.lab.spawn.SpawnTrace.setEnabled(LabLoggers.SPAWN.hasSubscribers());
+        }
         refresh(player);
         final String text = label(logger, option == null ? "" : option);
         source.sendSuccess(() -> Component.literal(text + (on ? " on" : " off"))
@@ -151,6 +159,7 @@ public final class LabLogCommand {
     private static int clearAll(final CommandSourceStack source) {
         final ServerPlayer player = (ServerPlayer) source.getEntity();
         LabLoggers.unsubscribeAll(player.getScoreboardName());
+        io.papermc.paper.lab.spawn.SpawnTrace.setEnabled(LabLoggers.SPAWN.hasSubscribers());
         LabHud.clear(player);
         source.sendSuccess(() -> Component.literal("off").withStyle(ChatFormatting.DARK_GRAY), false);
         return 1;

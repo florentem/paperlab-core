@@ -188,7 +188,7 @@ index 3a4da514c163e7565fc241835db52c464a5c4734..7323913b6518b70ed53613f49e70f5a0
      }
  
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index e193cbed115663e9ca7a611837d5b8540dda03db..d448ab2c671f3644074598939672c9c2513ab789 100644
+index e193cbed115663e9ca7a611837d5b8540dda03db..b40fe3ecfbf7f6d7b1bb402a60bb5b8e1f499576 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
 @@ -181,6 +181,7 @@ public final class NaturalSpawner {
@@ -199,6 +199,46 @@ index e193cbed115663e9ca7a611837d5b8540dda03db..d448ab2c671f3644074598939672c9c2
                          minDiff = Math.min(limit - level.getChunkSource().chunkMap.getMobCountNear(backingSet[k], mobCategory), minDiff);
                      }
                  }
+@@ -190,6 +191,13 @@ public final class NaturalSpawner {
+             } else {
+                 canSpawn = state.canSpawnForCategoryLocal(mobCategory, chunk.getPos());
+             }
++            // Paper Lab - трасса спавна: где остановилась попытка
++            if (io.papermc.paper.lab.spawn.SpawnTrace.enabled()) {
++                io.papermc.paper.lab.spawn.SpawnTrace.record(level, mobCategory, canSpawn
++                    ? io.papermc.paper.lab.spawn.SpawnTrace.Outcome.ATTEMPT
++                    : io.papermc.paper.lab.spawn.SpawnTrace.Outcome.CAP_FULL);
++            }
++            // Paper Lab end
+             if (canSpawn) {
+                 spawnCategoryForChunk(mobCategory, level, chunk, state::canSpawn, state::afterSpawn,
+                     maxSpawns, level.paperConfig().entities.spawning.perPlayerMobSpawns ? level.getChunkSource().chunkMap::updatePlayerMobTypeMap : null);
+@@ -309,6 +317,17 @@ public final class NaturalSpawner {
+                                 level.getChunkSource().chunkMap.updateFailurePlayerMobTypeMap(pos.getX() >> 4, pos.getZ() >> 4, mobCategory);
+                             }
+                             // Paper end - per player mob count backoff
++                            // Paper Lab - трасса спавна: различаем позицию и отмену плагином
++                            if (io.papermc.paper.lab.spawn.SpawnTrace.enabled()) {
++                                if (doSpawning == PreSpawnStatus.FAIL) {
++                                    io.papermc.paper.lab.spawn.SpawnTrace.record(level, mobCategory,
++                                        io.papermc.paper.lab.spawn.SpawnTrace.Outcome.POSITION);
++                                } else if (doSpawning == PreSpawnStatus.CANCELLED || doSpawning == PreSpawnStatus.ABORT) {
++                                    io.papermc.paper.lab.spawn.SpawnTrace.record(level, mobCategory,
++                                        io.papermc.paper.lab.spawn.SpawnTrace.Outcome.PLUGIN);
++                                }
++                            }
++                            // Paper Lab end
+                             if (doSpawning == PreSpawnStatus.ABORT) {
+                                 return;
+                             }
+@@ -328,6 +347,7 @@ public final class NaturalSpawner {
+                                     // CraftBukkit start
+                                     // SPIGOT-7045: Give ocelot babies back their special spawn reason. Note: This is the only modification required as ocelots count as monsters which means they only spawn during normal chunk ticking and do not spawn during chunk generation as starter mobs.
+                                     level.addFreshEntityWithPassengers(mob, (mob instanceof net.minecraft.world.entity.animal.feline.Ocelot && !((org.bukkit.entity.Ageable) mob.getBukkitEntity()).isAdult()) ? org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.OCELOT_BABY : org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.NATURAL);
++                                    if (io.papermc.paper.lab.spawn.SpawnTrace.enabled()) { io.papermc.paper.lab.spawn.SpawnTrace.record(level, mobCategory, io.papermc.paper.lab.spawn.SpawnTrace.Outcome.SPAWNED); } // Paper Lab - трасса спавна
+                                     if (!mob.isRemoved()) {
+                                         clusterSize++;
+                                         groupSize++;
 diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
 index fef616d7b92454a721f7a14941b62a8963080cc5..84ef0b5cc75b2542c3bbabe7d6b92319b10010f2 100644
 --- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java

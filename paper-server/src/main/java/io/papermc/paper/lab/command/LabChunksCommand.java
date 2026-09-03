@@ -35,6 +35,13 @@ public final class LabChunksCommand {
             Commands.literal("labchunks")
                 .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                 .then(
+                    Commands.literal("spawn")
+                        .then(Commands.literal("on").executes(ctx -> trace(ctx.getSource(), true, false)))
+                        .then(Commands.literal("off").executes(ctx -> trace(ctx.getSource(), false, false)))
+                        .then(Commands.literal("reset").executes(ctx -> trace(ctx.getSource(), true, true)))
+                        .executes(ctx -> showTrace(ctx.getSource()))
+                )
+                .then(
                     Commands.argument("player", StringArgumentType.word())
                         .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(
                             ctx.getSource().getServer().getPlayerList().getPlayers().stream()
@@ -42,6 +49,56 @@ public final class LabChunksCommand {
                         .executes(ctx -> run(ctx.getSource(), StringArgumentType.getString(ctx, "player")))
                 )
         );
+    }
+
+
+    /**
+     * Управление трассой спавна из консоли: включить, выключить, сбросить.
+     * В игре то же самое живёт как подписка {@code /log spawn}.
+     */
+    private static int trace(final CommandSourceStack source, final boolean on, final boolean reset) {
+        if (reset) {
+            io.papermc.paper.lab.spawn.SpawnTrace.reset();
+        }
+        io.papermc.paper.lab.spawn.SpawnTrace.setEnabled(on);
+        source.sendSuccess(() -> Component.literal("spawn trace " + (on ? "on" : "off")
+            + (reset ? " (сброшено)" : "")).withStyle(ChatFormatting.AQUA), false);
+        return 1;
+    }
+
+    /** Числа трассы по всем мирам и категориям, у которых есть попытки. */
+    private static int showTrace(final CommandSourceStack source) {
+        if (!io.papermc.paper.lab.spawn.SpawnTrace.enabled()) {
+            source.sendSuccess(() -> Component.literal("spawn trace выключена: /labchunks spawn on")
+                .withStyle(ChatFormatting.DARK_GRAY), false);
+            return 0;
+        }
+        int shown = 0;
+        for (final ServerLevel level : source.getServer().getAllLevels()) {
+            for (final net.minecraft.world.entity.MobCategory category
+                : net.minecraft.world.entity.MobCategory.values()) {
+                final long[] counts = io.papermc.paper.lab.spawn.SpawnTrace.snapshot(level, category);
+                if (counts == null) {
+                    continue;
+                }
+                final StringBuilder sb = new StringBuilder();
+                sb.append(level.dimension().identifier().getPath())
+                    .append("  ").append(category.getName()).append("  ");
+                for (final io.papermc.paper.lab.spawn.SpawnTrace.Outcome outcome
+                    : io.papermc.paper.lab.spawn.SpawnTrace.Outcome.values()) {
+                    sb.append(outcome.label()).append(' ')
+                        .append(counts[outcome.ordinal()]).append("  ");
+                }
+                source.sendSuccess(() -> Component.literal(sb.toString().stripTrailing())
+                    .withStyle(ChatFormatting.WHITE), false);
+                shown++;
+            }
+        }
+        if (shown == 0) {
+            source.sendSuccess(() -> Component.literal("попыток пока не было")
+                .withStyle(ChatFormatting.DARK_GRAY), false);
+        }
+        return shown;
     }
 
     private static int run(final CommandSourceStack source, final String name) {

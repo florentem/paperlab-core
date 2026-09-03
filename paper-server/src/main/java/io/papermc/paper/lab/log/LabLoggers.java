@@ -25,6 +25,11 @@ public final class LabLoggers {
      * которую можно включать и выключать независимо.
      */
     public static final LabLogger COUNTER = register(new LabLogger("counter", true));
+    /**
+     * Трасса спавна: где останавливаются попытки естественного спавна в мире игрока.
+     * Опция — категория ({@code monster} по умолчанию).
+     */
+    public static final LabLogger SPAWN = register(new LabLogger("spawn", true));
 
     private LabLoggers() {
     }
