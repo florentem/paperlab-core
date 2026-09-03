@@ -2,13 +2,20 @@ package io.papermc.paper.lab.bot;
 
 import java.util.Locale;
 
-/** Действие бота, повторяющее нажатие клавиши игроком. */
+/**
+ * Действие бота, повторяющее нажатие клавиши игроком.
+ *
+ * <p><b>Порядок объявления значим.</b> {@link LabActionPack} обходит действия
+ * в порядке ordinal через {@code EnumMap}, и Carpet опирается на то же:
+ * {@code USE} обрабатывается раньше {@code ATTACK}, потому что успешное
+ * использование в этом тике отменяет атаку.
+ */
 public enum LabAction {
 
-    /** Левая кнопка: удар по сущности либо добыча блока под прицелом. */
-    ATTACK,
     /** Правая кнопка: использование предмета, блока или сущности. */
     USE,
+    /** Левая кнопка: удар по сущности либо добыча блока под прицелом. */
+    ATTACK,
     JUMP,
     /** Выбросить один предмет из выбранного слота. */
     DROP_ITEM,
@@ -21,8 +28,7 @@ public enum LabAction {
     }
 
     /**
-     * Ритм повторения. Повторяет модель Carpet: {@code once} — один раз,
-     * {@code continuous} — каждый тик с удержанием, {@code every} — раз в N тиков.
+     * Ритм повторения — модель Carpet {@code Action}.
      *
      * <p>Имена компонентов специально не совпадают с именами фабрик: в record любой
      * метод с именем компонента обязан быть его аксессором.
@@ -45,6 +51,19 @@ public enum LabAction {
             return new Rhythm(-1, Math.max(1, ticks), false);
         }
 
+        /**
+         * Нужно ли сбрасывать удержание в том же тике, что и выполнение.
+         *
+         * <p>Carpet: {@code if (interval == 1 && !isContinuous) inactiveTick(...)} перед
+         * {@code execute}. Без этого при {@code interval 1} предмет остаётся «зажатым»,
+         * {@code itemUseCooldown} не обнуляется, и вместо одного использования за тик
+         * получается одно за четыре — ровно тот симптом, когда {@code interval 1}
+         * работает медленнее {@code interval 2}.
+         */
+        public boolean releaseBeforeExecute() {
+            return this.periodTicks == 1 && !this.hold;
+        }
+
         public String describe() {
             if (this.limit == 1) {
                 return "once";
@@ -58,12 +77,13 @@ public enum LabAction {
 
         private final Rhythm rhythm;
         private int done;
-        private int countdown;
+        /** Тиков до следующего срабатывания. Carpet: {@code next = interval + offset}. */
+        private int next;
         boolean finished;
 
         Running(final Rhythm rhythm) {
             this.rhythm = rhythm;
-            this.countdown = rhythm.periodTicks();
+            this.next = rhythm.periodTicks();
         }
 
         Rhythm rhythm() {
@@ -75,13 +95,15 @@ public enum LabAction {
             if (this.finished) {
                 return false;
             }
-            if (--this.countdown > 0) {
+            this.next--;
+            if (this.next > 0) {
                 return false;
             }
-            this.countdown = this.rhythm.periodTicks();
+            this.next = this.rhythm.periodTicks();
             return true;
         }
 
+        /** Учесть выполнение и, если задан лимит, завершить действие. */
         void executed() {
             this.done++;
             if (this.rhythm.limit() > 0 && this.done >= this.rhythm.limit()) {

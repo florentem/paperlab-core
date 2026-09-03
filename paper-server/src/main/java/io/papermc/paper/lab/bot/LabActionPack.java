@@ -6,7 +6,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -22,20 +21,27 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 /**
  * Действия бота: имитация нажатий игрока.
  *
- * <p>Модель и последовательность вызовов взяты из Carpet {@code EntityPlayerActionPack} —
- * это ровно те вызовы, которые делает сервер при получении пакетов от живого клиента:
- * {@code gameMode.handleBlockBreakAction}, {@code gameMode.useItemOn}, {@code entity.interact},
- * {@code player.attack}. Ничего своего в игровую логику не добавляется.
+ * <p>Порядок вызовов и тайминги повторяют Carpet {@code EntityPlayerActionPack} —
+ * это ровно то, что сервер делает при пакетах живого клиента:
+ * {@code gameMode.handleBlockBreakAction}, {@code gameMode.useItemOn},
+ * {@code entity.interact}, {@code player.attack}.
  *
- * <p>Тикается в фазе соединений <b>до</b> {@code doTick()} — там, где у живого игрока
- * обрабатываются входящие пакеты.
- *
- * <p>Дальность берётся из атрибутов {@code blockInteractionRange}/{@code entityInteractionRange},
- * а не из константы: так бот подчиняется тем же правилам, что игрок.
+ * <p>Три места, где отклонение от Carpet ломает поведение, поэтому воспроизведены буквально:
+ * <ol>
+ *   <li>прицеливание — блоки <b>и</b> сущности ({@link LabTracer}); штатный
+ *       {@code Entity.pick} видит только блоки, из-за чего бот ломает блоки,
+ *       но не бьёт сущности;</li>
+ *   <li>при {@code interval 1} удержание сбрасывается <b>в том же тике</b>, до выполнения
+ *       (см. {@link LabAction.Rhythm#releaseBeforeExecute()});</li>
+ *   <li>успешное {@code use} в этом тике отменяет {@code attack}, а успешная атака
+ *       при неуспешном use даёт use повторную попытку — как в
+ *       {@code MinecraftClient.handleInputEvents}.</li>
+ * </ol>
  */
 public final class LabActionPack {
 
     private final LabBot bot;
+    /** EnumMap обходится по ordinal: USE раньше ATTACK — как TreeMap у Carpet. */
     private final Map<LabAction, LabAction.Running> running = new EnumMap<>(LabAction.class);
 
     /** Блок, который бот сейчас копает, и накопленный прогресс. */
@@ -49,18 +55,18 @@ public final class LabActionPack {
     }
 
     public void start(final LabAction action, final LabAction.Rhythm rhythm) {
-        this.stopSideEffects(action);
+        this.inactiveTick(action);
         this.running.put(action, new LabAction.Running(rhythm));
     }
 
     public void stop(final LabAction action) {
         this.running.remove(action);
-        this.stopSideEffects(action);
+        this.inactiveTick(action);
     }
 
     public void stopAll() {
         for (final LabAction action : LabAction.values()) {
-            this.stopSideEffects(action);
+            this.inactiveTick(action);
         }
         this.running.clear();
         this.bot.setShiftKeyDown(false);
@@ -73,13 +79,66 @@ public final class LabActionPack {
         return out;
     }
 
-    /** Прерывание добычи блока и использования предмета при остановке действия. */
-    private void stopSideEffects(final LabAction action) {
-        if (action == LabAction.ATTACK) {
-            this.abortMining();
-        } else if (action == LabAction.USE) {
-            this.itemUseCooldown = 0;
-            this.bot.releaseUsingItem();
+    void tick() {
+        if (this.running.isEmpty()) {
+            return;
+        }
+        this.running.entrySet().removeIf(entry -> entry.getValue().finished);
+
+        // null — действие в этом тике не выполнялось; true/false — результат выполнения.
+        final Map<LabAction, Boolean> attempts = new EnumMap<>(LabAction.class);
+
+        for (final Map.Entry<LabAction, LabAction.Running> entry : this.running.entrySet()) {
+            final LabAction action = entry.getKey();
+            final LabAction.Running state = entry.getValue();
+
+            // Успешное использование отменяет атаку в этом же тике.
+            final boolean useSucceeded = Boolean.TRUE.equals(attempts.get(LabAction.USE));
+            if (!(useSucceeded && action == LabAction.ATTACK)) {
+                final Boolean result = this.tickAction(action, state);
+                if (result != null) {
+                    attempts.put(action, result);
+                }
+            }
+
+            // Атака прошла, а use в этом тике не удался — даём use ещё попытку.
+            if (action == LabAction.ATTACK
+                && Boolean.TRUE.equals(attempts.get(LabAction.ATTACK))
+                && Boolean.FALSE.equals(attempts.get(LabAction.USE))) {
+                final LabAction.Running use = this.running.get(LabAction.USE);
+                if (use != null) {
+                    this.execute(LabAction.USE, use);
+                    use.executed();
+                }
+            }
+        }
+    }
+
+    private @Nullable Boolean tickAction(final LabAction action, final LabAction.Running state) {
+        if (!state.due()) {
+            this.inactiveTick(action);
+            return null;
+        }
+        if (state.rhythm().releaseBeforeExecute()) {
+            // Освобождаем удержание до выполнения — иначе itemUseCooldown не обнулится
+            // и interval 1 будет работать медленнее interval 2.
+            this.inactiveTick(action);
+        }
+        final boolean result = this.execute(action, state);
+        state.executed();
+        return result;
+    }
+
+    /** Сброс удержания: прерывание добычи и отпускание предмета. */
+    private void inactiveTick(final LabAction action) {
+        switch (action) {
+            case ATTACK -> this.abortMining();
+            case USE -> {
+                this.itemUseCooldown = 0;
+                this.bot.releaseUsingItem();
+            }
+            default -> {
+            }
         }
     }
 
@@ -95,45 +154,31 @@ public final class LabActionPack {
         this.blockDamage = 0.0F;
     }
 
-    void tick() {
-        if (this.running.isEmpty()) {
-            return;
-        }
-        this.running.entrySet().removeIf(entry -> entry.getValue().finished);
-
-        for (final Map.Entry<LabAction, LabAction.Running> entry : this.running.entrySet()) {
-            final LabAction action = entry.getKey();
-            final LabAction.Running state = entry.getValue();
-            if (!state.due()) {
-                // Между срабатываниями удержание сбрасывается — иначе лук и еда
-                // никогда не отпустятся.
-                if (action == LabAction.ATTACK) {
-                    this.abortMining();
-                } else if (action == LabAction.USE) {
-                    this.itemUseCooldown = 0;
-                    this.bot.releaseUsingItem();
-                }
-                continue;
-            }
-            switch (action) {
-                case ATTACK -> this.attack(state);
-                case USE -> this.use();
-                case JUMP -> this.jump();
-                case DROP_ITEM -> this.drop(false);
-                case DROP_STACK -> this.drop(true);
-                case SWAP_HANDS -> this.swapHands();
-            }
-            state.executed();
-        }
+    private boolean execute(final LabAction action, final LabAction.Running state) {
+        return switch (action) {
+            case USE -> this.use();
+            case ATTACK -> this.attack(state);
+            case JUMP -> this.jump();
+            case DROP_ITEM -> this.drop(false);
+            case DROP_STACK -> this.drop(true);
+            case SWAP_HANDS -> this.swapHands();
+        };
     }
 
+    /**
+     * Дальность как у игрока: для блоков и сущностей она разная, поэтому трассируем
+     * по большей, а решение о применимости оставляем самим вызовам движка.
+     */
     private HitResult target() {
         final double reach = Math.max(this.bot.blockInteractionRange(), this.bot.entityInteractionRange());
-        return this.bot.pick(reach, 1.0F, false);
+        return LabTracer.rayTrace(this.bot, reach);
     }
 
-    private void attack(final LabAction.Running state) {
+    private boolean attack(final LabAction.Running state) {
         final HitResult hit = this.target();
+        if (hit == null) {
+            return false;
+        }
         switch (hit.getType()) {
             case ENTITY -> {
                 final Entity entity = ((EntityHitResult) hit).getEntity();
@@ -144,34 +189,41 @@ public final class LabActionPack {
                 }
                 this.bot.resetAttackStrengthTicker();
                 this.bot.resetLastActionTime();
+                return true;
             }
-            case BLOCK -> this.mine((BlockHitResult) hit);
+            case BLOCK -> {
+                return this.mine((BlockHitResult) hit);
+            }
             default -> {
+                return false;
             }
         }
     }
 
-    private void mine(final BlockHitResult hit) {
+    /** @return true, если блок в этом тике был сломан */
+    private boolean mine(final BlockHitResult hit) {
         if (this.blockHitDelay > 0) {
             this.blockHitDelay--;
-            return;
+            return false;
         }
         final ServerLevel level = this.bot.level();
         final BlockPos pos = hit.getBlockPos();
         final Direction side = hit.getDirection();
         if (this.bot.blockActionRestricted(level, pos, this.bot.gameMode.getGameModeForPlayer())) {
-            return;
+            return false;
         }
         if (this.currentBlock != null && level.getBlockState(this.currentBlock).isAir()) {
             this.currentBlock = null;
-            return;
+            return false;
         }
         final BlockState state = level.getBlockState(pos);
+        boolean broken = false;
 
         if (this.bot.gameMode.getGameModeForPlayer().isCreative()) {
             this.bot.gameMode.handleBlockBreakAction(pos,
                 ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK, side, level.getMaxY(), -1);
             this.blockHitDelay = 5;
+            broken = true;
         } else if (this.currentBlock == null || !this.currentBlock.equals(pos)) {
             if (this.currentBlock != null) {
                 this.bot.gameMode.handleBlockBreakAction(this.currentBlock,
@@ -185,6 +237,7 @@ public final class LabActionPack {
             }
             if (solid && state.getDestroyProgress(this.bot, level, pos) >= 1.0F) {
                 this.currentBlock = null;
+                broken = true;
             } else {
                 this.currentBlock = pos;
                 this.blockDamage = 0.0F;
@@ -197,30 +250,33 @@ public final class LabActionPack {
                 this.currentBlock = null;
                 this.blockHitDelay = 5;
                 this.blockDamage = 0.0F;
+                broken = true;
             }
             level.destroyBlockProgress(-1, pos, (int) (this.blockDamage * 10.0F));
         }
         this.bot.resetLastActionTime();
         this.bot.swing(InteractionHand.MAIN_HAND);
+        return broken;
     }
 
-    private void use() {
+    private boolean use() {
         if (this.itemUseCooldown > 0) {
             this.itemUseCooldown--;
-            return;
+            return true;
         }
         if (this.bot.isUsingItem()) {
-            return;
+            return true;
         }
         final HitResult hit = this.target();
         final ServerLevel level = this.bot.level();
 
         for (final InteractionHand hand : InteractionHand.values()) {
-            if (hit.getType() == HitResult.Type.BLOCK) {
+            if (hit != null && hit.getType() == HitResult.Type.BLOCK) {
                 final BlockHitResult blockHit = (BlockHitResult) hit;
                 final BlockPos pos = blockHit.getBlockPos();
                 this.bot.resetLastActionTime();
-                if (level.mayInteract(this.bot, pos)) {
+                if (pos.getY() < level.getMaxY() - (blockHit.getDirection() == Direction.UP ? 1 : 0)
+                    && level.mayInteract(this.bot, pos)) {
                     final InteractionResult result = this.bot.gameMode.useItemOn(
                         this.bot, level, this.bot.getItemInHand(hand), hand, blockHit);
                     if (result instanceof final InteractionResult.Success success) {
@@ -228,10 +284,10 @@ public final class LabActionPack {
                             this.bot.swing(hand);
                         }
                         this.itemUseCooldown = 3;
-                        return;
+                        return true;
                     }
                 }
-            } else if (hit.getType() == HitResult.Type.ENTITY) {
+            } else if (hit != null && hit.getType() == HitResult.Type.ENTITY) {
                 final EntityHitResult entityHit = (EntityHitResult) hit;
                 final Entity entity = entityHit.getEntity();
                 this.bot.resetLastActionTime();
@@ -239,40 +295,45 @@ public final class LabActionPack {
                     .subtract(entity.getX(), entity.getY(), entity.getZ());
                 if (entity.interact(this.bot, hand, relative).consumesAction()) {
                     this.itemUseCooldown = 3;
-                    return;
+                    return true;
                 }
                 if (this.bot.interactOn(entity, hand, relative).consumesAction()) {
                     this.itemUseCooldown = 3;
-                    return;
+                    return true;
                 }
             }
             if (this.bot.gameMode.useItem(this.bot, level, this.bot.getItemInHand(hand), hand)
                 .consumesAction()) {
                 this.itemUseCooldown = 3;
-                return;
+                return true;
             }
         }
+        return false;
     }
 
-    private void jump() {
-        if (this.bot.onGround()) {
-            this.bot.jumpFromGround();
+    private boolean jump() {
+        if (!this.bot.onGround()) {
+            return false;
         }
+        this.bot.jumpFromGround();
+        return true;
     }
 
-    private void drop(final boolean whole) {
+    private boolean drop(final boolean whole) {
         final Inventory inventory = this.bot.getInventory();
         final int slot = inventory.getSelectedSlot();
         final ItemStack stack = inventory.getItem(slot);
         if (stack.isEmpty()) {
-            return;
+            return false;
         }
         this.bot.drop(inventory.removeItem(slot, whole ? stack.getCount() : 1), false, true);
+        return true;
     }
 
-    private void swapHands() {
+    private boolean swapHands() {
         final ItemStack main = this.bot.getMainHandItem().copy();
         this.bot.setItemInHand(InteractionHand.MAIN_HAND, this.bot.getOffhandItem().copy());
         this.bot.setItemInHand(InteractionHand.OFF_HAND, main);
+        return true;
     }
 }

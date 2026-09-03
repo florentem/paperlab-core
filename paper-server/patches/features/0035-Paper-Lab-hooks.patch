@@ -38,15 +38,16 @@ index c4396509584011a5bbc171510478e8e62ce44d94..901e893d2672be1eaa36ddc1b65ae57d
          TitleCommand.register(this.dispatcher, context);
          TriggerCommand.register(this.dispatcher);
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 05fcc3328436109b5aa4e2cef9bda799b4d3e1ff..61ab648f044fb7890db69d4ae8954bc4c4030cf8 100644
+index 05fcc3328436109b5aa4e2cef9bda799b4d3e1ff..ed42a0b7bdd2c6af9cf0496d822b15cb06c5436b 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -1836,6 +1836,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1836,6 +1836,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
  
          profiler.popPush("connection");
          this.tickConnection();
 +        io.papermc.paper.lab.bot.LabBotRegistry.tickConnectionPhase(); // Paper Lab - боты: doTick в фазе соединений, как у живого игрока
 +        io.papermc.paper.lab.log.LabHud.tick(this); // Paper Lab - подписки /log в таб-лист
++        io.papermc.paper.lab.chunkmap.ChunkMapService.tick(this); // Paper Lab - карта чанков
          profiler.popPush("players");
          this.playerList.tick();
          profiler.popPush("debugSubscribers");
@@ -78,6 +79,37 @@ index 075e294333115738b25b64a390df323276cf39f9..7689ac59503eeec419b6dc55e251d0e4
          }
  
          profiler.popPush("tickTickingChunks");
+diff --git a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+index 5dbb2849f32ac3418f8fdf76c04022d7e9dc165b..de5f0aa54f8f9fcb3957244d3d47f436ff51fc58 100644
+--- a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+@@ -153,6 +153,13 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+         final net.minecraft.resources.Identifier identifier = packet.payload().type().id();
+         final byte[] data = discardedPayload.data();
+         try {
++            // Paper Lab - карта чанков: свой канал разбираем до остальной обработки
++            if (this instanceof final ServerGamePacketListenerImpl gameListener
++                && io.papermc.paper.lab.chunkmap.ChunkMapService.handleIncoming(
++                    gameListener.getPlayer(), identifier, data)) {
++                return;
++            }
++            // Paper Lab end
+             final boolean registerChannel = CUSTOM_REGISTER.equals(identifier);
+             if (registerChannel || CUSTOM_UNREGISTER.equals(identifier)) {
+                 // Strings separated by zeros instead of length prefixes
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index baec5d072b8f2d9379dba850b04e881e5267ca6b..5d674357e888fa7c5158acc4916ed8d6c1ff0b29 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -434,6 +434,8 @@ public abstract class PlayerList {
+     public net.kyori.adventure.text.@Nullable Component remove(final ServerPlayer player, final net.kyori.adventure.text.Component leaveMessage) {
+         // Paper end - Fix kick event leave message not being sent
+         ServerLevel level = player.level();
++        io.papermc.paper.lab.chunkmap.ChunkMapService.onDisconnect(player); // Paper Lab - снять подписки карты чанков
++        io.papermc.paper.lab.log.LabLoggers.unsubscribeAll(player.getScoreboardName()); // Paper Lab - снять подписки /log
+         player.awardStat(Stats.LEAVE_GAME);
+         // CraftBukkit start - Quitting must be before we do final save of data, in case plugins need to modify it
+         // See SPIGOT-5799, SPIGOT-6145
 diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
 index fef616d7b92454a721f7a14941b62a8963080cc5..84ef0b5cc75b2542c3bbabe7d6b92319b10010f2 100644
 --- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java

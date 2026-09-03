@@ -8,6 +8,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import net.minecraft.core.UUIDUtil;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
@@ -28,6 +30,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * <p>Все операции обязаны выполняться на главном потоке сервера.
  */
 public final class LabBotRegistry {
+
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("PaperLab");
 
     /** Имя → бот. Порядок вставки сохраняется, чтобы тик был детерминированным. */
     private static final Map<String, LabBot> BOTS = new LinkedHashMap<>();
@@ -105,6 +109,12 @@ public final class LabBotRegistry {
         server.getPlayerList().placeNewPlayer(
             connection, bot, CommonListenerCookie.createInitial(profile, false));
 
+        // Данные игрока нужно загружать явно. Обычный вход читает их до placeNewPlayer,
+        // а бота мы конструируем сами, минуя логин, поэтому без этого вызова инвентарь,
+        // здоровье и опыт не восстанавливаются между spawn и kill. Сохранение при
+        // PlayerList.remove при этом работает и раньше — терялась только загрузка.
+        loadSavedData(server, bot);
+
         // placeNewPlayer размещает игрока по сохранённым/спавновым координатам.
         // Переносим на запрошенную точку уже после регистрации, чтобы chunk tickets
         // и NearbyPlayers пересчитались обычным путём.
@@ -121,6 +131,26 @@ public final class LabBotRegistry {
 
         BOTS.put(key, bot);
         return null;
+    }
+
+
+    /**
+     * Читает сохранённые данные бота: инвентарь, здоровье, опыт, эндер-сундук,
+     * а также восстанавливает эндер-жемчуг и транспорт, как при обычном входе игрока.
+     */
+    private static void loadSavedData(final MinecraftServer server, final LabBot bot) {
+        try (final ProblemReporter.ScopedCollector reporter =
+                 new ProblemReporter.ScopedCollector(bot.problemPath(), LOGGER)) {
+            server.getPlayerList().loadPlayerData(bot.nameAndId())
+                .map(tag -> TagValueInput.create(reporter, bot.registryAccess(), tag))
+                .ifPresent(input -> {
+                    bot.load(input);
+                    bot.loadAndSpawnEnderPearls(input);
+                    bot.loadAndSpawnParentVehicle(input);
+                });
+        } catch (final Throwable t) {
+            LOGGER.error("Не удалось прочитать сохранённые данные бота {}", bot.labName(), t);
+        }
     }
 
     /**
