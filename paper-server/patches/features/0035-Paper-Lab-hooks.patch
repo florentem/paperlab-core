@@ -151,10 +151,18 @@ index 5dbb2849f32ac3418f8fdf76c04022d7e9dc165b..de5f0aa54f8f9fcb3957244d3d47f436
              if (registerChannel || CUSTOM_UNREGISTER.equals(identifier)) {
                  // Strings separated by zeros instead of length prefixes
 diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
-index baec5d072b8f2d9379dba850b04e881e5267ca6b..9907b2b46ff2e3dda96b1a93118620da5a6f7167 100644
+index baec5d072b8f2d9379dba850b04e881e5267ca6b..7a959fa8a5eff74e09a0408a1cc6a223b95a3dc1 100644
 --- a/net/minecraft/server/players/PlayerList.java
 +++ b/net/minecraft/server/players/PlayerList.java
-@@ -434,6 +434,9 @@ public abstract class PlayerList {
+@@ -193,6 +193,7 @@ public abstract class PlayerList {
+             )
+         );
+         player.getBukkitEntity().sendSupportedChannels(); // CraftBukkit
++        io.papermc.paper.lab.chunkmap.ChunkMapService.announceChannels(player); // Paper Lab - объявить каналы карты чанков
+         playerConnection.send(new ClientboundChangeDifficultyPacket(levelData.getDifficulty(), levelData.isDifficultyLocked()));
+         playerConnection.send(new ClientboundPlayerAbilitiesPacket(player.getAbilities()));
+         playerConnection.send(new ClientboundSetHeldSlotPacket(player.getInventory().getSelectedSlot()));
+@@ -434,6 +435,9 @@ public abstract class PlayerList {
      public net.kyori.adventure.text.@Nullable Component remove(final ServerPlayer player, final net.kyori.adventure.text.Component leaveMessage) {
          // Paper end - Fix kick event leave message not being sent
          ServerLevel level = player.level();

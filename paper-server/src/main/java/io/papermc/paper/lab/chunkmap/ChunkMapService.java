@@ -70,6 +70,31 @@ public final class ChunkMapService {
         return true;
     }
 
+
+    /**
+     * Объявляет клиенту, что сервер принимает наши каналы.
+     *
+     * <p>Без этого клиентский ChunkDebug пишет «unavailable» и даже не пробует
+     * прислать {@code hello}: сетевой слой Fabric считает канал недоступным, пока сервер
+     * не перечислил его в {@code minecraft:register}. Paper объявляет только каналы,
+     * зарегистрированные плагинами через Bukkit Messenger, — наших там нет,
+     * поэтому объявляем сами, сразу после штатного {@code sendSupportedChannels}.
+     *
+     * <p>Формат тела: имена каналов, разделённые нулевым байтом (не длиной строки) —
+     * так же, как их разбирает входящий обработчик.
+     */
+    public static void announceChannels(final ServerPlayer player) {
+        final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        for (final Identifier channel : new Identifier[]{
+            ChunkMapWire.HELLO, ChunkMapWire.BYE,
+            ChunkMapWire.START_WATCHING, ChunkMapWire.STOP_WATCHING,
+            ChunkMapWire.CHUNK_DATA, ChunkMapWire.CHUNK_UNLOAD, ChunkMapWire.CHUNK_REFRESH}) {
+            out.writeBytes(channel.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            out.write(0);
+        }
+        send(player, Identifier.withDefaultNamespace("register"), out.toByteArray());
+    }
+
     public static void onHello(final ServerPlayer player, final int clientVersion) {
         HANDSHAKED.add(player.getUUID());
         send(player, ChunkMapWire.HELLO,
