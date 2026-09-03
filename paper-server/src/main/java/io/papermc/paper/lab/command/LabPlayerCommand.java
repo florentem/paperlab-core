@@ -3,6 +3,9 @@ package io.papermc.paper.lab.command;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import io.papermc.paper.lab.bot.LabAction;
 import io.papermc.paper.lab.bot.LabBot;
 import io.papermc.paper.lab.bot.LabBotRegistry;
 import net.minecraft.ChatFormatting;
@@ -21,6 +24,7 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * {@code /player} — боты, синтаксис и поведение как в Carpet.
@@ -48,6 +52,40 @@ public final class LabPlayerCommand {
                         .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(
                             LabBotRegistry.bots().stream().map(LabBot::labName).toList(), builder))
                         .then(Commands.literal("kill").executes(ctx -> kill(ctx)))
+                        .then(Commands.literal("stop").executes(ctx -> stop(ctx)))
+                        .then(action("attack", LabAction.ATTACK))
+                        .then(action("use", LabAction.USE))
+                        .then(action("jump", LabAction.JUMP))
+                        .then(action("drop", LabAction.DROP_ITEM))
+                        .then(action("dropStack", LabAction.DROP_STACK))
+                        .then(action("swapHands", LabAction.SWAP_HANDS))
+                        .then(Commands.literal("sneak").executes(ctx -> sneak(ctx, true)))
+                        .then(Commands.literal("unsneak").executes(ctx -> sneak(ctx, false)))
+                        .then(Commands.literal("sprint").executes(ctx -> sprint(ctx, true)))
+                        .then(Commands.literal("unsprint").executes(ctx -> sprint(ctx, false)))
+                        .then(
+                            Commands.literal("hotbar").then(
+                                Commands.argument("slot", IntegerArgumentType.integer(1, 9))
+                                    .executes(ctx -> hotbar(ctx, IntegerArgumentType.getInteger(ctx, "slot")))
+                            )
+                        )
+                        .then(
+                            Commands.literal("look")
+                                .then(Commands.literal("north").executes(ctx -> look(ctx, 180.0F, 0.0F)))
+                                .then(Commands.literal("south").executes(ctx -> look(ctx, 0.0F, 0.0F)))
+                                .then(Commands.literal("east").executes(ctx -> look(ctx, -90.0F, 0.0F)))
+                                .then(Commands.literal("west").executes(ctx -> look(ctx, 90.0F, 0.0F)))
+                                .then(Commands.literal("up").executes(ctx -> look(ctx, null, -90.0F)))
+                                .then(Commands.literal("down").executes(ctx -> look(ctx, null, 90.0F)))
+                                .then(
+                                    Commands.argument("rotation", RotationArgument.rotation())
+                                        .executes(ctx -> {
+                                            final Vec2 rot = RotationArgument.getRotation(ctx, "rotation")
+                                                .getRotation(ctx.getSource());
+                                            return look(ctx, rot.y, rot.x);
+                                        })
+                                )
+                        )
                         .then(
                             Commands.literal("spawn")
                                 .executes(ctx -> spawn(ctx, null, null, null, null))
@@ -129,6 +167,107 @@ public final class LabPlayerCommand {
         return 1;
     }
 
+
+    /**
+     * Узел действия: {@code <действие> [once|continuous|interval <n>|stop]}.
+     * Без ритма — {@code once}, как в Carpet.
+     */
+    private static LiteralArgumentBuilder<CommandSourceStack> action(final String literal,
+                                                                    final LabAction act) {
+        return Commands.literal(literal)
+            .executes(ctx -> run(ctx, act, LabAction.Rhythm.once()))
+            .then(Commands.literal("once")
+                .executes(ctx -> run(ctx, act, LabAction.Rhythm.once())))
+            .then(Commands.literal("continuous")
+                .executes(ctx -> run(ctx, act, LabAction.Rhythm.continuous())))
+            .then(Commands.literal("stop")
+                .executes(ctx -> stopAction(ctx, act)))
+            .then(Commands.literal("interval").then(
+                Commands.argument("ticks", IntegerArgumentType.integer(1, 72000))
+                    .executes(ctx -> run(ctx, act,
+                        LabAction.Rhythm.every(IntegerArgumentType.getInteger(ctx, "ticks"))))
+            ));
+    }
+
+    private static @Nullable LabBot resolve(final CommandContext<CommandSourceStack> ctx) {
+        final String name = StringArgumentType.getString(ctx, "name");
+        final LabBot bot = LabBotRegistry.get(name);
+        if (bot == null) {
+            ctx.getSource().sendFailure(Component.literal("нет бота " + name));
+        }
+        return bot;
+    }
+
+    private static int run(final CommandContext<CommandSourceStack> ctx,
+                           final LabAction act,
+                           final LabAction.Rhythm rhythm) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.actions().start(act, rhythm);
+        return 1;
+    }
+
+    private static int stopAction(final CommandContext<CommandSourceStack> ctx, final LabAction act) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.actions().stop(act);
+        return 1;
+    }
+
+    private static int stop(final CommandContext<CommandSourceStack> ctx) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.actions().stopAll();
+        return 1;
+    }
+
+    private static int sneak(final CommandContext<CommandSourceStack> ctx, final boolean value) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.setShiftKeyDown(value);
+        return 1;
+    }
+
+    private static int sprint(final CommandContext<CommandSourceStack> ctx, final boolean value) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.setSprinting(value);
+        return 1;
+    }
+
+    private static int hotbar(final CommandContext<CommandSourceStack> ctx, final int slot) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.getInventory().setSelectedSlot(slot - 1);
+        return 1;
+    }
+
+    private static int look(final CommandContext<CommandSourceStack> ctx,
+                            final @Nullable Float yaw,
+                            final @Nullable Float pitch) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.snapTo(bot.position(),
+            yaw == null ? bot.getYRot() : yaw,
+            pitch == null ? bot.getXRot() : pitch);
+        bot.setYHeadRot(bot.getYRot());
+        return 1;
+    }
+
     private static int kill(final CommandContext<CommandSourceStack> ctx) {
         final CommandSourceStack source = ctx.getSource();
         final String name = StringArgumentType.getString(ctx, "name");
@@ -158,6 +297,14 @@ public final class LabPlayerCommand {
                 dim.identifier().getPath(),
                 bot.getX(), bot.getY(), bot.getZ(),
                 bot.gameMode.getGameModeForPlayer().getName())).withStyle(ChatFormatting.GRAY), false);
+            final var acting = bot.actions().active();
+            if (!acting.isEmpty()) {
+                final StringBuilder sb = new StringBuilder("    ");
+                acting.forEach((act, rhythm) ->
+                    sb.append(act.id()).append(" ").append(rhythm.describe()).append("  "));
+                source.sendSuccess(() -> Component.literal(sb.toString().stripTrailing())
+                    .withStyle(ChatFormatting.DARK_GRAY), false);
+            }
         }
         return LabBotRegistry.count();
     }

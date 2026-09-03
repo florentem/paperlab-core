@@ -44,6 +44,7 @@ import net.minecraft.server.level.ServerPlayer;
 public final class LabBot extends ServerPlayer {
 
     private final String labName;
+    private final LabActionPack actions = new LabActionPack(this);
 
     LabBot(final MinecraftServer server,
            final ServerLevel level,
@@ -57,11 +58,18 @@ public final class LabBot extends ServerPlayer {
         return this.labName;
     }
 
+    public LabActionPack actions() {
+        return this.actions;
+    }
+
     /**
      * Вызывается {@link LabBotRegistry} в фазе соединений — там, где живому игроку
      * это делает его packet listener.
      */
     void tickConnectionPhase() {
+        // Действия идут до doTick(): у живого игрока в этой фазе сначала
+        // обрабатываются входящие пакеты, и только потом вызывается doTick().
+        this.actions.tick();
         this.doTick();
     }
 }
