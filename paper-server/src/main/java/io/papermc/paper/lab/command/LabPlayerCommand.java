@@ -53,6 +53,7 @@ public final class LabPlayerCommand {
                             LabBotRegistry.bots().stream().map(LabBot::labName).toList(), builder))
                         .then(Commands.literal("kill").executes(ctx -> kill(ctx)))
                         .then(Commands.literal("stop").executes(ctx -> stop(ctx)))
+                        .then(Commands.literal("ghost").executes(ctx -> ghost(ctx)))
                         .then(action("attack", LabAction.ATTACK))
                         .then(action("use", LabAction.USE))
                         .then(action("jump", LabAction.JUMP))
@@ -215,6 +216,24 @@ public final class LabPlayerCommand {
             return 0;
         }
         bot.actions().stop(act);
+        return 1;
+    }
+
+
+    /**
+     * Режим наблюдателя для бота. Нужен и как инструмент, и как способ проверить сам
+     * режим без живого игрока: бота можно поставить рядом с фермой и посмотреть,
+     * меняются ли статусы чанков.
+     */
+    private static int ghost(final CommandContext<CommandSourceStack> ctx) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        final boolean on = io.papermc.paper.lab.ghost.LabGhost.toggle(bot);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+            bot.labName() + (on ? " ghost on" : " ghost off"))
+            .withStyle(on ? ChatFormatting.AQUA : ChatFormatting.DARK_GRAY), false);
         return 1;
     }
 
