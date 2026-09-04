@@ -44,6 +44,16 @@ public final class LabActionPack {
     /** EnumMap обходится по ordinal: USE раньше ATTACK — как TreeMap у Carpet. */
     private final Map<LabAction, LabAction.Running> running = new EnumMap<>(LabAction.class);
 
+    /**
+     * Ход вперёд-назад и вбок, в долях от полной скорости.
+     *
+     * <p>Значения кладутся в {@code zza} и {@code xxa} — те же поля, куда живому игроку
+     * пишет обработчик его пакетов движения. Дальше всё делает обычный тик сущности,
+     * поэтому бот идёт, плывёт и управляет транспортом ровно как игрок.
+     */
+    private float forward;
+    private float strafing;
+
     /** Блок, который бот сейчас копает, и накопленный прогресс. */
     private @Nullable BlockPos currentBlock;
     private float blockDamage;
@@ -71,6 +81,82 @@ public final class LabActionPack {
         this.running.clear();
         this.bot.setShiftKeyDown(false);
         this.bot.setSprinting(false);
+        this.stopMovement();
+    }
+
+    /**
+     * Ход: {@code 1} — вперёд, {@code -1} — назад.
+     *
+     * <p>Значение держится, пока его не сменят: это «клавиша зажата», а не шаг.
+     */
+    public void setForward(final float value) {
+        this.forward = value;
+    }
+
+    /** Ход вбок: {@code 1} — влево, {@code -1} — вправо. Как у живого игрока. */
+    public void setStrafing(final float value) {
+        this.strafing = value;
+    }
+
+    public void stopMovement() {
+        this.forward = 0.0F;
+        this.strafing = 0.0F;
+        this.bot.zza = 0.0F;
+        this.bot.xxa = 0.0F;
+    }
+
+    public float forward() {
+        return this.forward;
+    }
+
+    public float strafing() {
+        return this.strafing;
+    }
+
+    /**
+     * Сесть в ближайший транспорт в радиусе трёх блоков.
+     *
+     * <p>{@code onlyRideables} — только лодки, вагонетки и лошади; иначе годится любая
+     * сущность, на которую можно сесть. Лошадь сажает через {@code mobInteract}: у неё
+     * посадка идёт через взаимодействие, а не через {@code startRiding}.
+     *
+     * @return {@code true}, если нашли, на что сесть
+     */
+    public boolean mount(final boolean onlyRideables) {
+        final java.util.List<net.minecraft.world.entity.Entity> candidates = this.bot.level().getEntities(
+            this.bot, this.bot.getBoundingBox().inflate(3.0D, 1.0D, 3.0D),
+            entity -> !onlyRideables
+                || entity instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart
+                || entity instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat
+                || entity instanceof net.minecraft.world.entity.animal.equine.AbstractHorse);
+
+        final net.minecraft.world.entity.Entity vehicle = this.bot.getVehicle();
+        net.minecraft.world.entity.Entity closest = null;
+        double best = Double.POSITIVE_INFINITY;
+
+        for (final net.minecraft.world.entity.Entity candidate : candidates) {
+            if (candidate == this.bot || candidate == vehicle) {
+                continue;
+            }
+            final double distance = this.bot.distanceToSqr(candidate);
+            if (distance < best) {
+                best = distance;
+                closest = candidate;
+            }
+        }
+        if (closest == null) {
+            return false;
+        }
+        if (onlyRideables && closest instanceof final net.minecraft.world.entity.animal.equine.AbstractHorse horse) {
+            horse.mobInteract(this.bot, net.minecraft.world.InteractionHand.MAIN_HAND);
+        } else {
+            this.bot.startRiding(closest, true, true);
+        }
+        return true;
+    }
+
+    public void dismount() {
+        this.bot.stopRiding();
     }
 
     public Map<LabAction, LabAction.Rhythm> active() {
@@ -80,6 +166,7 @@ public final class LabActionPack {
     }
 
     void tick() {
+        this.applyMovement();
         if (this.running.isEmpty()) {
             return;
         }
@@ -112,6 +199,20 @@ public final class LabActionPack {
                 }
             }
         }
+    }
+
+    /**
+     * Перекладывает ход в поля ввода сущности.
+     *
+     * <p>Делается каждый тик, а не один раз при команде: движок обнуляет {@code zza} и
+     * {@code xxa} по ходу тика, и без повторной записи бот делает один шаг и встаёт.
+     *
+     * <p>Приседание замедляет так же, как живого игрока.
+     */
+    private void applyMovement() {
+        final float velocity = this.bot.isShiftKeyDown() ? 0.3F : 1.0F;
+        this.bot.zza = this.forward * velocity;
+        this.bot.xxa = this.strafing * velocity;
     }
 
     private @Nullable Boolean tickAction(final LabAction action, final LabAction.Running state) {

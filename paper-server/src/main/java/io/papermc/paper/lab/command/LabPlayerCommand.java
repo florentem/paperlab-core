@@ -72,6 +72,36 @@ public final class LabPlayerCommand {
                         .then(action("drop", LabAction.DROP_ITEM))
                         .then(action("dropStack", LabAction.DROP_STACK))
                         .then(action("swapHands", LabAction.SWAP_HANDS))
+                        .then(Commands.literal("mount")
+                            .executes(ctx -> mount(ctx, true))
+                            .then(Commands.literal("anything").executes(ctx -> mount(ctx, false))))
+                        .then(Commands.literal("dismount").executes(ctx -> dismount(ctx)))
+                        .then(Commands.literal("respawn")
+                            .executes(ctx -> respawn(ctx, null))
+                            .then(Commands.literal("on").executes(ctx -> respawn(ctx, Boolean.TRUE)))
+                            .then(Commands.literal("off").executes(ctx -> respawn(ctx, Boolean.FALSE))))
+                        .then(
+                            Commands.literal("move")
+                                .then(Commands.literal("forward").executes(ctx -> move(ctx, 1.0F, 0.0F)))
+                                .then(Commands.literal("back").executes(ctx -> move(ctx, -1.0F, 0.0F)))
+                                .then(Commands.literal("left").executes(ctx -> move(ctx, 0.0F, 1.0F)))
+                                .then(Commands.literal("right").executes(ctx -> move(ctx, 0.0F, -1.0F)))
+                                .then(Commands.literal("stop").executes(ctx -> move(ctx, 0.0F, 0.0F)))
+                        )
+                        .then(
+                            Commands.literal("turn")
+                                .then(Commands.literal("left").executes(ctx -> turn(ctx, -90.0F, 0.0F)))
+                                .then(Commands.literal("right").executes(ctx -> turn(ctx, 90.0F, 0.0F)))
+                                .then(Commands.literal("back").executes(ctx -> turn(ctx, 180.0F, 0.0F)))
+                                .then(
+                                    Commands.argument("rotation", RotationArgument.rotation())
+                                        .executes(ctx -> {
+                                            final Vec2 rot = RotationArgument.getRotation(ctx, "rotation")
+                                                .getRotation(ctx.getSource());
+                                            return turn(ctx, rot.y, rot.x);
+                                        })
+                                )
+                        )
                         .then(Commands.literal("sneak").executes(ctx -> sneak(ctx, true)))
                         .then(Commands.literal("unsneak").executes(ctx -> sneak(ctx, false)))
                         .then(Commands.literal("sprint").executes(ctx -> sprint(ctx, true)))
@@ -172,7 +202,7 @@ public final class LabPlayerCommand {
         }
 
         final String error = LabBotRegistry.spawn(
-            source.getServer(), name, level, pos, rot.y, rot.x, mode, flying,
+            source.getServer(), name, level, pos, rot.y, rot.x, mode, flying, false,
             // Профиль резолвится в сети, поэтому ошибка создания приходит позже
             // возврата из команды. Отправляем её тем же путём, что и синхронную.
             source::sendFailure);
@@ -261,6 +291,85 @@ public final class LabPlayerCommand {
         return 1;
     }
 
+    /**
+     * Ход. Значение держится, пока его не сменят: это «клавиша зажата», а не шаг.
+     *
+     * <p>Нужно для двух вещей сразу: завести бота в точку и держать его в стену или
+     * в лодке, когда конструкция рассчитана на постоянное давление.
+     */
+    private static int move(final CommandContext<CommandSourceStack> ctx,
+                            final float forward, final float strafing) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.actions().setForward(forward);
+        bot.actions().setStrafing(strafing);
+        return 1;
+    }
+
+    /** Поворот относительно текущего взгляда, в градусах. */
+    private static int turn(final CommandContext<CommandSourceStack> ctx,
+                            final float yaw, final float pitch) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.snapTo(bot.position(), bot.getYRot() + yaw, bot.getXRot() + pitch);
+        bot.setYHeadRot(bot.getYRot());
+        return 1;
+    }
+
+    /**
+     * Сесть в ближайший транспорт.
+     *
+     * <p>По умолчанию только лодки, вагонетки и лошади — то, что обычно и нужно.
+     * {@code mount anything} снимает ограничение.
+     *
+     * <p>Транспорт по теме исследования: пассажир выпадает из переписи мобкапа до
+     * фильтра причины спавна, и лодочные конструкции этим пользуются.
+     */
+    private static int mount(final CommandContext<CommandSourceStack> ctx, final boolean onlyRideables) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        if (!bot.actions().mount(onlyRideables)) {
+            ctx.getSource().sendFailure(Component.literal("nothing to mount nearby"));
+            return 0;
+        }
+        return 1;
+    }
+
+    private static int dismount(final CommandContext<CommandSourceStack> ctx) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        bot.actions().dismount();
+        return 1;
+    }
+
+    /**
+     * Поднимать ли бота после смерти.
+     *
+     * <p>Без этого ночной прогон обрывается на первой смерти: клиента у бота нет,
+     * а значит некому прислать запрос на возрождение. Бот поднимается через секунду
+     * на том же месте, где его создали.
+     */
+    private static int respawn(final CommandContext<CommandSourceStack> ctx, final Boolean value) {
+        final LabBot bot = resolve(ctx);
+        if (bot == null) {
+            return 0;
+        }
+        final boolean enabled = value == null ? !bot.autoRespawn() : value;
+        bot.autoRespawn(enabled);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+            bot.labName() + (enabled ? " respawn on" : " respawn off"))
+            .withStyle(enabled ? ChatFormatting.AQUA : ChatFormatting.DARK_GRAY), false);
+        return 1;
+    }
+
     private static int sneak(final CommandContext<CommandSourceStack> ctx, final boolean value) {
         final LabBot bot = resolve(ctx);
         if (bot == null) {
@@ -331,6 +440,25 @@ public final class LabPlayerCommand {
                 dim.identifier().getPath(),
                 bot.getX(), bot.getY(), bot.getZ(),
                 bot.gameMode.getGameModeForPlayer().getName())).withStyle(ChatFormatting.GRAY), false);
+            if (bot.actions().forward() != 0.0F || bot.actions().strafing() != 0.0F
+                || bot.isPassenger() || bot.autoRespawn()) {
+                final StringBuilder extra = new StringBuilder("    ");
+                if (bot.actions().forward() != 0.0F) {
+                    extra.append(bot.actions().forward() > 0 ? "forward " : "back ");
+                }
+                if (bot.actions().strafing() != 0.0F) {
+                    extra.append(bot.actions().strafing() > 0 ? "left " : "right ");
+                }
+                if (bot.isPassenger()) {
+                    extra.append("riding ");
+                }
+                if (bot.autoRespawn()) {
+                    extra.append("respawn ");
+                }
+                source.sendSuccess(() -> Component.literal(extra.toString().stripTrailing())
+                    .withStyle(ChatFormatting.DARK_GRAY), false);
+            }
+
             final var acting = bot.actions().active();
             if (!acting.isEmpty()) {
                 final StringBuilder sb = new StringBuilder("    ");

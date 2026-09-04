@@ -20,7 +20,9 @@ import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.Level;
 import net.minecraft.server.network.CommonListenerCookie;
 import net.minecraft.server.players.NameAndId;
 import net.minecraft.util.ProblemReporter;
@@ -46,6 +48,29 @@ public final class LabBotRegistry {
     private static final Map<String, LabBot> BOTS = new LinkedHashMap<>();
 
     /**
+     * Чем создавался бот — всё, что нужно, чтобы поднять его заново.
+     *
+     * <p>{@code skinName} и {@code inGameName} различаются, когда включён суффикс:
+     * скин берётся по первому, а UUID и место в таб-листе — по второму.
+     */
+    public record Spec(String skinName, String inGameName, ResourceKey<Level> dimension,
+                       Vec3 pos, float yaw, float pitch, GameType gameMode, boolean flying) {
+    }
+
+    /** Бот, которого ждём поднять: спецификация и сколько тиков осталось. */
+    private record Pending(Spec spec, boolean autoRespawn, int ticksLeft) {
+    }
+
+    /**
+     * Пауза перед подъёмом. Секунда нужна не для красоты: смерть роняет предметы и
+     * запускает событие, и поднимать игрока в том же тике — верный способ поймать
+     * состояние, которого движок не ожидает.
+     */
+    private static final int RESPAWN_DELAY_TICKS = 20;
+
+    private static final List<Pending> PENDING = new ArrayList<>();
+
+    /**
      * Имена, для которых профиль уже запрашивается. Резолв уходит в сеть и возвращается
      * через несколько тиков; без этой пометки два быстрых {@code spawn} подряд создали бы
      * двух ботов с одним именем.
@@ -65,6 +90,7 @@ public final class LabBotRegistry {
      * его таймеры еды и подъёма.
      */
     public static void tickConnectionPhase() {
+        tickPending();
         if (BOTS.isEmpty()) {
             return;
         }
@@ -74,7 +100,15 @@ public final class LabBotRegistry {
             // ServerboundClientCommandPacket. Без этого он остаётся призраком в таб-листе,
             // поэтому убираем его штатным путём.
             if (bot.isDeadOrDying() || bot.isRemoved() || bot.hasDisconnected()) {
+                // Спецификацию снимаем до удаления: после remove бот уже ничего не помнит.
+                final Spec spec = bot.spec();
+                final boolean respawn = bot.autoRespawn() && bot.isDeadOrDying();
                 remove(bot.labName());
+                if (respawn && spec != null) {
+                    PENDING.add(new Pending(spec, true, RESPAWN_DELAY_TICKS));
+                    LOGGER.info("Bot {} died, respawning in {} ticks",
+                        spec.inGameName(), RESPAWN_DELAY_TICKS);
+                }
                 continue;
             }
             try {
@@ -109,6 +143,7 @@ public final class LabBotRegistry {
                                          final float pitch,
                                          final GameType gameMode,
                                          final boolean flying,
+                                         final boolean autoRespawn,
                                          final Consumer<Component> feedback) {
         if (name.isBlank()) {
             return "bot name cannot be empty";
@@ -158,7 +193,9 @@ public final class LabBotRegistry {
                     // зависит: берём его от имени с суффиксом, иначе конфликт с живым
                     // игроком никуда не денется.
                     final GameProfile inGame = withName(profile, inGameName, suffix);
-                    final String failure = create(server, inGame, level, pos, yaw, pitch, gameMode, flying);
+                    final Spec spec = new Spec(skinName, inGameName, level.dimension(),
+                        pos, yaw, pitch, gameMode, flying);
+                    final String failure = create(server, inGame, level, spec, autoRespawn);
                     if (failure != null) {
                         feedback.accept(Component.literal(failure));
                     }
@@ -189,6 +226,41 @@ public final class LabBotRegistry {
             UUIDUtil.createOfflinePlayerUUID(inGameName), inGameName, profile.properties());
     }
 
+    /** Поднять ботов, у которых вышла пауза. */
+    private static void tickPending() {
+        if (PENDING.isEmpty()) {
+            return;
+        }
+        final List<Pending> ready = new ArrayList<>();
+        PENDING.replaceAll(pending -> new Pending(pending.spec(), pending.autoRespawn(),
+            pending.ticksLeft() - 1));
+        PENDING.removeIf(pending -> {
+            if (pending.ticksLeft() > 0) {
+                return false;
+            }
+            ready.add(pending);
+            return true;
+        });
+
+        for (final Pending pending : ready) {
+            final Spec spec = pending.spec();
+            final MinecraftServer server = net.minecraft.server.MinecraftServer.getServer();
+            final ServerLevel level = server == null ? null : server.getLevel(spec.dimension());
+            if (level == null) {
+                LOGGER.warn("Cannot respawn bot {}: dimension {} is gone",
+                    spec.inGameName(), spec.dimension().identifier());
+                continue;
+            }
+            final String error = spawn(server, spec.skinName(), level, spec.pos(),
+                spec.yaw(), spec.pitch(), spec.gameMode(), spec.flying(), pending.autoRespawn(),
+                message -> LOGGER.warn("Respawn of {} failed: {}",
+                    spec.inGameName(), message.getString()));
+            if (error != null) {
+                LOGGER.warn("Respawn of {} failed: {}", spec.inGameName(), error);
+            }
+        }
+    }
+
     /**
      * Кто это по имени. Сначала спрашиваем кэш имён сервера: для существующего игрока он
      * вернёт настоящий UUID, и бот получит его скин. Для выдуманного имени останется
@@ -212,11 +284,13 @@ public final class LabBotRegistry {
     private static @Nullable String create(final MinecraftServer server,
                                            final GameProfile profile,
                                            final ServerLevel level,
-                                           final Vec3 pos,
-                                           final float yaw,
-                                           final float pitch,
-                                           final GameType gameMode,
-                                           final boolean flying) {
+                                           final Spec spec,
+                                           final boolean autoRespawn) {
+        final Vec3 pos = spec.pos();
+        final float yaw = spec.yaw();
+        final float pitch = spec.pitch();
+        final GameType gameMode = spec.gameMode();
+        final boolean flying = spec.flying();
         final String key = profile.name().toLowerCase(Locale.ROOT);
         if (BOTS.containsKey(key)) {
             return "bot '" + profile.name() + "' already exists";
@@ -264,6 +338,9 @@ public final class LabBotRegistry {
             new ClientboundRotateHeadPacket(bot, (byte) (bot.yHeadRot * 256 / 360)), level.dimension());
         server.getPlayerList().broadcastAll(
             ClientboundEntityPositionSyncPacket.of(bot), level.dimension());
+
+        bot.spec(spec);
+        bot.autoRespawn(autoRespawn);
 
         BOTS.put(key, bot);
         return null;

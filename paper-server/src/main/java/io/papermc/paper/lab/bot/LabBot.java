@@ -46,6 +46,15 @@ public final class LabBot extends ServerPlayer {
     private final String labName;
     private final LabActionPack actions = new LabActionPack(this);
 
+    /**
+     * Чем бот был создан. Нужно, чтобы поднять его заново после смерти: живому игроку
+     * респавн присылает клиент, а боту его слать некому.
+     */
+    private LabBotRegistry.Spec spec;
+
+    /** Поднимать ли бота после смерти. По умолчанию нет — как было раньше. */
+    private boolean autoRespawn;
+
     LabBot(final MinecraftServer server,
            final ServerLevel level,
            final GameProfile profile,
@@ -60,6 +69,22 @@ public final class LabBot extends ServerPlayer {
 
     public LabActionPack actions() {
         return this.actions;
+    }
+
+    LabBotRegistry.Spec spec() {
+        return this.spec;
+    }
+
+    void spec(final LabBotRegistry.Spec value) {
+        this.spec = value;
+    }
+
+    public boolean autoRespawn() {
+        return this.autoRespawn;
+    }
+
+    public void autoRespawn(final boolean value) {
+        this.autoRespawn = value;
     }
 
     /**
