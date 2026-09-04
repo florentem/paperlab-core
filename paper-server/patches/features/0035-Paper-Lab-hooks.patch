@@ -6,21 +6,29 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Единственная точка вмешательства форка в патч-систему. Держим одним патчем,
-чтобы каждый новый lab-модуль не добавлял очередной номер в серию.
+Единственная точка вмешательства форка в патч-систему, намеренно минимальная.
 
-MinecraftServer.tickChildren после tickConnection():
-  - LabBotRegistry.tickConnectionPhase() — doTick ботов в той же фазе и в том же
-    порядке относительно tick(), что у живого игрока (levels -> connection -> players);
-  - LabHud.tick() — обновление подписок /log в таб-листе.
+Здесь остаётся только то, чего принципиально нельзя сделать плагином. Всё
+остальное — команды, HUD, счётчики, карта чанков, мобкап — живёт в плагине
+PaperLab, а ботов даёт FakePlayer-CE.
 
-ServerChunkCache.tickChunks: три метки SpawnPhaseTracker
-  (BEFORE_CENSUS / AFTER_CENSUS / AFTER_SPAWN).
+1. Режим наблюдателя (io.papermc.paper.lab.ghost.LabGhost) — шесть точек:
+   - ChunkMap.updatePlayerMobTypeMap / updateFailurePlayerMobTypeMap — вне переписи мобкапа;
+   - ChunkMap.isChunkNearPlayer — не расширяет область спавна;
+   - ChunkMap.skipPlayer — не участвует в загрузке чанков;
+   - NaturalSpawner.spawnForChunk — не режет бюджет чанка;
+   - ActivationRange.activateEntities — не будит мобов (EAR);
+   - LivingEntity.canBeSeenByAnyone — мобы не выбирают его целью.
+   Дистанция симуляции и affectsSpawning ставятся из API и патча не требуют.
 
-Commands: регистрация /log, /player, /counter.
+2. Трасса спавна (io.papermc.paper.lab.spawn.SpawnTrace) — четыре метки в
+   NaturalSpawner: упёрлось в кап, попытка пошла, не подошла позиция,
+   отменил плагин, заспавнено. Наружу движок этого не публикует.
 
-HopperBlockEntity.ejectItems: LabCounters.consume() — воронка, направленная
-в шерсть, учитывает и уничтожает содержимое.
+3. PlayerList.remove — снять режим наблюдателя при выходе.
+
+Сбор включается только при активной подписке: в горячем пути остаётся
+чтение одного volatile поля.
 
 diff --git a/io/papermc/paper/entity/activation/ActivationRange.java b/io/papermc/paper/entity/activation/ActivationRange.java
 index 829f7685904fd741e00403647ae76d32275c34a3..6354549da685134cbd67aa9e77d540eb5cd47241 100644
@@ -34,37 +42,6 @@ index 829f7685904fd741e00403647ae76d32275c34a3..6354549da685134cbd67aa9e77d540eb
              player.activatedTick = MinecraftServer.currentTick;
              if (world.spigotConfig.ignoreSpectatorActivation && player.isSpectator()) {
                  continue;
-diff --git a/net/minecraft/commands/Commands.java b/net/minecraft/commands/Commands.java
-index c4396509584011a5bbc171510478e8e62ce44d94..eb0afa3902d308e42a5a053632eb2ae9c08067d5 100644
---- a/net/minecraft/commands/Commands.java
-+++ b/net/minecraft/commands/Commands.java
-@@ -258,6 +258,12 @@ public class Commands {
-         TellRawCommand.register(this.dispatcher, context);
-         TestCommand.register(this.dispatcher, context);
-         TickCommand.register(this.dispatcher);
-+        io.papermc.paper.lab.command.LabLogCommand.register(this.dispatcher); // Paper Lab
-+        io.papermc.paper.lab.command.LabPlayerCommand.register(this.dispatcher); // Paper Lab
-+        io.papermc.paper.lab.command.LabCounterCommand.register(this.dispatcher); // Paper Lab
-+        io.papermc.paper.lab.command.LabTickCommand.register(this.dispatcher); // Paper Lab - дописывает узлы в ванильный /tick
-+        io.papermc.paper.lab.command.LabGhostCommand.register(this.dispatcher); // Paper Lab
-+        io.papermc.paper.lab.command.LabChunksCommand.register(this.dispatcher); // Paper Lab
-         TimeCommand.register(this.dispatcher, context);
-         TitleCommand.register(this.dispatcher, context);
-         TriggerCommand.register(this.dispatcher);
-diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 05fcc3328436109b5aa4e2cef9bda799b4d3e1ff..ed42a0b7bdd2c6af9cf0496d822b15cb06c5436b 100644
---- a/net/minecraft/server/MinecraftServer.java
-+++ b/net/minecraft/server/MinecraftServer.java
-@@ -1836,6 +1836,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
- 
-         profiler.popPush("connection");
-         this.tickConnection();
-+        io.papermc.paper.lab.bot.LabBotRegistry.tickConnectionPhase(); // Paper Lab - боты: doTick в фазе соединений, как у живого игрока
-+        io.papermc.paper.lab.log.LabHud.tick(this); // Paper Lab - подписки /log в таб-лист
-+        io.papermc.paper.lab.chunkmap.ChunkMapService.tick(this); // Paper Lab - карта чанков
-         profiler.popPush("players");
-         this.playerList.tick();
-         profiler.popPush("debugSubscribers");
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
 index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..b4c6c6220a992a516ef428b7d503830e76864455 100644
 --- a/net/minecraft/server/level/ChunkMap.java
@@ -105,71 +82,15 @@ index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..b4c6c6220a992a516ef428b7d503830e
          return player.isSpectator() && !this.level.getGameRules().get(GameRules.SPECTATORS_GENERATE_CHUNKS);
      }
  
-diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
-index 075e294333115738b25b64a390df323276cf39f9..7689ac59503eeec419b6dc55e251d0e4fe24f952 100644
---- a/net/minecraft/server/level/ServerChunkCache.java
-+++ b/net/minecraft/server/level/ServerChunkCache.java
-@@ -534,6 +534,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
- 
-     private void tickChunks(final ProfilerFiller profiler, final long timeDiff) {
-         profiler.push("naturalSpawnCount");
-+        io.papermc.paper.lab.SpawnPhaseTracker.mark(this.level, io.papermc.paper.lab.SpawnPhase.BEFORE_CENSUS); // Paper Lab - метка фазы
-         int chunkCount = this.distanceManager.getNaturalSpawnChunkCount();
-         // Paper start - Optional per player mob spawns
-         NaturalSpawner.SpawnState spawnCookie;
-@@ -557,6 +558,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
-             spawnCookie = NaturalSpawner.createState(chunkCount, this.level.getAllEntities(), this::getFullChunk, !this.level.paperConfig().entities.spawning.perPlayerMobSpawns ? new LocalMobCapCalculator(this.chunkMap) : null, false);
-         }
-         // Paper end - Optional per player mob spawns
-+        io.papermc.paper.lab.SpawnPhaseTracker.mark(this.level, io.papermc.paper.lab.SpawnPhase.AFTER_CENSUS); // Paper Lab - метка фазы
-         this.lastSpawnState = spawnCookie;
-         boolean doMobSpawning = this.level.getGameRules().get(GameRules.SPAWN_MOBS) && !this.level.players().isEmpty(); // CraftBukkit
-         int tickSpeed = this.level.getGameRules().get(GameRules.RANDOM_TICK_SPEED);
-@@ -593,6 +595,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
-             }
-         } finally {
-             spawningChunks.clear();
-+            io.papermc.paper.lab.SpawnPhaseTracker.mark(this.level, io.papermc.paper.lab.SpawnPhase.AFTER_SPAWN); // Paper Lab - метка фазы
-         }
- 
-         profiler.popPush("tickTickingChunks");
-diff --git a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
-index 5dbb2849f32ac3418f8fdf76c04022d7e9dc165b..de5f0aa54f8f9fcb3957244d3d47f436ff51fc58 100644
---- a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
-+++ b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
-@@ -153,6 +153,13 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
-         final net.minecraft.resources.Identifier identifier = packet.payload().type().id();
-         final byte[] data = discardedPayload.data();
-         try {
-+            // Paper Lab - карта чанков: свой канал разбираем до остальной обработки
-+            if (this instanceof final ServerGamePacketListenerImpl gameListener
-+                && io.papermc.paper.lab.chunkmap.ChunkMapService.handleIncoming(
-+                    gameListener.getPlayer(), identifier, data)) {
-+                return;
-+            }
-+            // Paper Lab end
-             final boolean registerChannel = CUSTOM_REGISTER.equals(identifier);
-             if (registerChannel || CUSTOM_UNREGISTER.equals(identifier)) {
-                 // Strings separated by zeros instead of length prefixes
 diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
-index baec5d072b8f2d9379dba850b04e881e5267ca6b..7a959fa8a5eff74e09a0408a1cc6a223b95a3dc1 100644
+index baec5d072b8f2d9379dba850b04e881e5267ca6b..50c9459cef959e9a34966d73bde51af3946742ac 100644
 --- a/net/minecraft/server/players/PlayerList.java
 +++ b/net/minecraft/server/players/PlayerList.java
-@@ -193,6 +193,7 @@ public abstract class PlayerList {
-             )
-         );
-         player.getBukkitEntity().sendSupportedChannels(); // CraftBukkit
-+        io.papermc.paper.lab.chunkmap.ChunkMapService.announceChannels(player); // Paper Lab - объявить каналы карты чанков
-         playerConnection.send(new ClientboundChangeDifficultyPacket(levelData.getDifficulty(), levelData.isDifficultyLocked()));
-         playerConnection.send(new ClientboundPlayerAbilitiesPacket(player.getAbilities()));
-         playerConnection.send(new ClientboundSetHeldSlotPacket(player.getInventory().getSelectedSlot()));
-@@ -434,6 +435,9 @@ public abstract class PlayerList {
+@@ -434,6 +434,7 @@ public abstract class PlayerList {
      public net.kyori.adventure.text.@Nullable Component remove(final ServerPlayer player, final net.kyori.adventure.text.Component leaveMessage) {
          // Paper end - Fix kick event leave message not being sent
          ServerLevel level = player.level();
-+        io.papermc.paper.lab.chunkmap.ChunkMapService.onDisconnect(player); // Paper Lab - снять подписки карты чанков
-+        io.papermc.paper.lab.ghost.LabGhost.onDisconnect(player); // Paper Lab - снять режим наблюдателя
-+        io.papermc.paper.lab.log.LabLoggers.unsubscribeAll(player.getScoreboardName()); // Paper Lab - снять подписки /log
++        io.papermc.paper.lab.ghost.LabGhost.onDisconnect(player); // Paper Lab - снять режим наблюдателя при выходе
          player.awardStat(Stats.LEAVE_GAME);
          // CraftBukkit start - Quitting must be before we do final save of data, in case plugins need to modify it
          // See SPIGOT-5799, SPIGOT-6145
@@ -239,18 +160,3 @@ index e193cbed115663e9ca7a611837d5b8540dda03db..b40fe3ecfbf7f6d7b1bb402a60bb5b8e
                                      if (!mob.isRemoved()) {
                                          clusterSize++;
                                          groupSize++;
-diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
-index fef616d7b92454a721f7a14941b62a8963080cc5..84ef0b5cc75b2542c3bbabe7d6b92319b10010f2 100644
---- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java
-+++ b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
-@@ -418,6 +418,10 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
-     // Paper end - Perf: Optimize Hoppers
- 
-     private static boolean ejectItems(final Level level, final BlockPos blockPos, final HopperBlockEntity self) {
-+        // Paper Lab - счётчик: воронка в шерсть учитывает и уничтожает содержимое
-+        if (io.papermc.paper.lab.counter.LabCounters.consume(level, blockPos, level.getBlockState(blockPos), self)) {
-+            return true;
-+        }
-         Container container = getAttachedContainer(level, blockPos, self);
-         if (container == null) {
-             return false;
