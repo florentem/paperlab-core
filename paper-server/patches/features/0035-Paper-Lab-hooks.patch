@@ -8,9 +8,8 @@ Content-Transfer-Encoding: 8bit
 
 Единственная точка вмешательства форка в патч-систему, намеренно минимальная.
 
-Здесь остаётся только то, чего принципиально нельзя сделать плагином. Всё
-остальное — команды, HUD, счётчики, карта чанков, мобкап — живёт в плагине
-PaperLab, а ботов даёт FakePlayer-CE.
+Здесь остаётся только то, чего нельзя сделать плагином. Команды, HUD,
+счётчики, карта чанков и чтение мобкапа живут в плагине PaperLab.
 
 1. Режим наблюдателя (io.papermc.paper.lab.ghost.LabGhost) — шесть точек:
    - ChunkMap.updatePlayerMobTypeMap / updateFailurePlayerMobTypeMap — вне переписи мобкапа;
@@ -25,9 +24,18 @@ PaperLab, а ботов даёт FakePlayer-CE.
    NaturalSpawner: упёрлось в кап, попытка пошла, не подошла позиция,
    отменил плагин, заспавнено. Наружу движок этого не публикует.
 
-3. PlayerList.remove — снять режим наблюдателя при выходе.
+3. Боты (io.papermc.paper.lab.bot) — две строки:
+   - MinecraftServer.tickChildren после tickConnection(): doTick бота в той же
+     фазе и в том же порядке относительно tick(), что у живого игрока
+     (levels -> connection -> players). Плагин так не может: его планировщик
+     работает в начале tickChildren, до фазы уровней;
+   - Commands: регистрация /player. Команда пользуется ванильными типами
+     аргументов (Vec3Argument, RotationArgument, DimensionArgument,
+     GameModeArgument), поэтому живёт рядом с ботами, а не в плагине.
 
-Сбор включается только при активной подписке: в горячем пути остаётся
+4. PlayerList.remove — снять режим наблюдателя при выходе.
+
+Сбор трассы включается только при активной подписке: в горячем пути остаётся
 чтение одного volatile поля.
 
 diff --git a/io/papermc/paper/entity/activation/ActivationRange.java b/io/papermc/paper/entity/activation/ActivationRange.java
@@ -42,6 +50,30 @@ index 829f7685904fd741e00403647ae76d32275c34a3..6354549da685134cbd67aa9e77d540eb
              player.activatedTick = MinecraftServer.currentTick;
              if (world.spigotConfig.ignoreSpectatorActivation && player.isSpectator()) {
                  continue;
+diff --git a/net/minecraft/commands/Commands.java b/net/minecraft/commands/Commands.java
+index c4396509584011a5bbc171510478e8e62ce44d94..91b60fd6bc598cac8ba97aee9269aadeaed785b9 100644
+--- a/net/minecraft/commands/Commands.java
++++ b/net/minecraft/commands/Commands.java
+@@ -258,6 +258,7 @@ public class Commands {
+         TellRawCommand.register(this.dispatcher, context);
+         TestCommand.register(this.dispatcher, context);
+         TickCommand.register(this.dispatcher);
++        io.papermc.paper.lab.command.LabPlayerCommand.register(this.dispatcher); // Paper Lab - боты
+         TimeCommand.register(this.dispatcher, context);
+         TitleCommand.register(this.dispatcher, context);
+         TriggerCommand.register(this.dispatcher);
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 05fcc3328436109b5aa4e2cef9bda799b4d3e1ff..da424f6c39570696535a901a3ca14a9831794771 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1836,6 +1836,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+         profiler.popPush("connection");
+         this.tickConnection();
++        io.papermc.paper.lab.bot.LabBotRegistry.tickConnectionPhase(); // Paper Lab - боты: doTick в фазе соединений, как у живого игрока
+         profiler.popPush("players");
+         this.playerList.tick();
+         profiler.popPush("debugSubscribers");
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
 index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..b4c6c6220a992a516ef428b7d503830e76864455 100644
 --- a/net/minecraft/server/level/ChunkMap.java
