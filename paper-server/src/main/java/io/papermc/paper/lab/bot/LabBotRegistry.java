@@ -110,22 +110,31 @@ public final class LabBotRegistry {
                                          final GameType gameMode,
                                          final boolean flying,
                                          final Consumer<Component> feedback) {
-        if (name.isBlank() || name.length() > 16) {
-            return "имя бота должно быть от 1 до 16 символов";
+        if (name.isBlank()) {
+            return "имя бота не может быть пустым";
         }
-        final String key = name.toLowerCase(Locale.ROOT);
+        // Имя в игре — с суффиксом, скин — по имени без него. Разделение нужно, чтобы
+        // бот выглядел как нужный игрок, но не занимал его UUID: иначе сам игрок войти
+        // не сможет, сервер увидит дублирующийся вход.
+        final String suffix = io.papermc.paper.lab.rules.LabRuleState.fakePlayerNameSuffix;
+        final String skinName = name;
+        final String inGameName = suffix.isEmpty() ? name : name + suffix;
+        if (inGameName.length() > 16) {
+            return "имя с суффиксом длиннее 16 символов: '" + inGameName + "'";
+        }
+        final String key = inGameName.toLowerCase(Locale.ROOT);
         if (BOTS.containsKey(key)) {
-            return "бот с именем '" + name + "' уже существует";
+            return "бот с именем '" + inGameName + "' уже существует";
         }
-        if (server.getPlayerList().getPlayerByName(name) != null) {
-            return "игрок с именем '" + name + "' уже на сервере";
+        if (server.getPlayerList().getPlayerByName(inGameName) != null) {
+            return "игрок с именем '" + inGameName + "' уже на сервере";
         }
         if (!SPAWNING.add(key)) {
-            return "бот '" + name + "' уже создаётся";
+            return "бот '" + inGameName + "' уже создаётся";
         }
 
         CompletableFuture
-            .supplyAsync(() -> identity(server, name), Util.backgroundExecutor())
+            .supplyAsync(() -> identity(server, skinName), Util.backgroundExecutor())
             .thenCompose(identity -> ResolvableProfile.createUnresolved(identity.id())
                 .resolveProfile(server.services().profileResolver())
                 // Профиля может не быть вовсе: имя выдумано или сервер без сети.
@@ -136,16 +145,48 @@ public final class LabBotRegistry {
             .whenCompleteAsync((profile, error) -> {
                 SPAWNING.remove(key);
                 if (error != null) {
-                    LOGGER.error("Не удалось получить профиль для бота {}", name, error);
+                    LOGGER.error("Не удалось получить профиль для бота {}", inGameName, error);
                     feedback.accept(Component.literal("не удалось получить профиль: " + error));
                     return;
                 }
-                final String failure = create(server, profile, level, pos, yaw, pitch, gameMode, flying);
-                if (failure != null) {
-                    feedback.accept(Component.literal(failure));
+                // Всё, что дальше, выполняется в колбэке future. Исключение отсюда
+                // CompletableFuture проглотит молча: ни в логе, ни в чате не будет
+                // ничего, а бот просто не появится. Один раз так и вышло — поэтому
+                // ловим сами и говорим вслух.
+                try {
+                    // Скины лежат в свойствах профиля и от имени не зависят, а вот UUID
+                    // зависит: берём его от имени с суффиксом, иначе конфликт с живым
+                    // игроком никуда не денется.
+                    final GameProfile inGame = withName(profile, inGameName, suffix);
+                    final String failure = create(server, inGame, level, pos, yaw, pitch, gameMode, flying);
+                    if (failure != null) {
+                        feedback.accept(Component.literal(failure));
+                    }
+                } catch (final Throwable t) {
+                    LOGGER.error("Не удалось создать бота {}", inGameName, t);
+                    feedback.accept(Component.literal("не удалось создать бота: " + t));
                 }
             }, server);
         return null;
+    }
+
+    /**
+     * Профиль под именем в игре: свойства (скин, плащ) сохраняются, имя и UUID берутся
+     * от имени с суффиксом.
+     *
+     * <p>Без суффикса профиль остаётся как есть — тогда бот и правда занимает UUID игрока,
+     * и это осознанный режим: имя правила пустое, значит пользователь этого и хотел.
+     */
+    private static GameProfile withName(final GameProfile profile,
+                                        final String inGameName,
+                                        final String suffix) {
+        if (suffix.isEmpty()) {
+            return profile;
+        }
+        // Свойства (в том числе текстуры) переносим конструктором, а не putAll:
+        // карта свойств у GameProfile может быть неизменяемой, и putAll тогда бросает.
+        return new GameProfile(
+            UUIDUtil.createOfflinePlayerUUID(inGameName), inGameName, profile.properties());
     }
 
     /**

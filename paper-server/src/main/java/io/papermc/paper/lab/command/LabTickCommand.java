@@ -46,12 +46,14 @@ public final class LabTickCommand {
         }
 
         tick.addChild(Commands.literal("toggle")
-            .requires(source -> source.getBukkitSender().hasPermission("paperlab.tick"))
+            .requires(source -> io.papermc.paper.lab.rules.LabRuleState.tickCommandCarpetfied
+                && source.getBukkitSender().hasPermission("paperlab.tick"))
             .executes(ctx -> toggle(ctx.getSource()))
             .build());
 
         tick.addChild(Commands.literal("warp")
-            .requires(source -> source.getBukkitSender().hasPermission("paperlab.tick"))
+            .requires(source -> io.papermc.paper.lab.rules.LabRuleState.tickCommandCarpetfied
+                && source.getBukkitSender().hasPermission("paperlab.tick"))
             .then(Commands.literal("stop").executes(ctx -> stopWarp(ctx.getSource())))
             .then(Commands.argument("time", TimeArgument.time(1))
                 .executes(ctx -> warp(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "time"))))
