@@ -55,7 +55,9 @@ public final class LabPlayerCommand {
     public static void register(final CommandDispatcher<CommandSourceStack> dispatcher) {
         node = dispatcher.register(
             Commands.literal("player")
-                .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                // Право bukkit, а не уровень оператора: так узел виден LuckPerms
+                // наравне с остальными командами инструментария (paperlab.player).
+                .requires(source -> source.getBukkitSender().hasPermission("paperlab.player"))
                 .then(Commands.literal("list").executes(ctx -> list(ctx.getSource())))
                 .then(
                     Commands.argument("name", StringArgumentType.word())
@@ -170,7 +172,10 @@ public final class LabPlayerCommand {
         }
 
         final String error = LabBotRegistry.spawn(
-            source.getServer(), name, level, pos, rot.y, rot.x, mode, flying);
+            source.getServer(), name, level, pos, rot.y, rot.x, mode, flying,
+            // Профиль резолвится в сети, поэтому ошибка создания приходит позже
+            // возврата из команды. Отправляем её тем же путём, что и синхронную.
+            source::sendFailure);
         if (error != null) {
             source.sendFailure(Component.literal(error));
             return 0;

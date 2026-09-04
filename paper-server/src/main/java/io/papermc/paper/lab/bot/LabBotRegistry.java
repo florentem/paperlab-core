@@ -2,32 +2,41 @@ package io.papermc.paper.lab.bot;
 
 import com.mojang.authlib.GameProfile;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+import net.minecraft.util.Util;
 import net.minecraft.core.UUIDUtil;
-import net.minecraft.util.ProblemReporter;
-import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.CommonListenerCookie;
+import net.minecraft.server.players.NameAndId;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.entity.Avatar;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * Реестр AFK-ботов и их тик в правильной фазе.
  *
- * <p>Боты — вмешательство, поэтому доступны только в режиме {@link io.papermc.paper.lab.LabMode#CONTROL}.
- * Прогон с ботами <b>не сравнивается</b> напрямую с вариантами A/B/C: дополнительный игрок
- * сам меняет chunk tickets, {@code NearbyPlayers} и локальный мобкап.
- *
- * <p>Все операции обязаны выполняться на главном потоке сервера.
+ * <p>Все операции обязаны выполняться на главном потоке сервера, кроме явно
+ * помеченного разрешения имени.
  */
 public final class LabBotRegistry {
 
@@ -35,6 +44,13 @@ public final class LabBotRegistry {
 
     /** Имя → бот. Порядок вставки сохраняется, чтобы тик был детерминированным. */
     private static final Map<String, LabBot> BOTS = new LinkedHashMap<>();
+
+    /**
+     * Имена, для которых профиль уже запрашивается. Резолв уходит в сеть и возвращается
+     * через несколько тиков; без этой пометки два быстрых {@code spawn} подряд создали бы
+     * двух ботов с одним именем.
+     */
+    private static final Set<String> SPAWNING = new HashSet<>();
 
     private LabBotRegistry() {
     }
@@ -64,8 +80,7 @@ public final class LabBotRegistry {
             try {
                 bot.tickConnectionPhase();
             } catch (final Throwable t) {
-                org.apache.logging.log4j.LogManager.getLogger("PaperLab")
-                    .error("Ошибка тика бота {}; бот удаляется", bot.labName(), t);
+                LOGGER.error("Ошибка тика бота {}; бот удаляется", bot.labName(), t);
                 remove(bot.labName());
             }
         }
@@ -74,7 +89,17 @@ public final class LabBotRegistry {
     /**
      * Создаёт бота и регистрирует его как обычного игрока.
      *
-     * @return сообщение об ошибке, либо {@code null} при успехе
+     * <p><b>Создание асинхронное.</b> Профиль, а с ним скин и плащ, резолвится через
+     * сервисы Mojang, поэтому бот появляется на несколько тиков позже возврата отсюда.
+     * Синхронно проверяется только то, что видно сразу; об остальном сообщает
+     * {@code feedback}, который вызывается уже на главном потоке.
+     *
+     * <p><b>Про настоящие имена.</b> Если имя принадлежит существующему игроку, бот
+     * получает его UUID и его скин. Плата: пока такой бот в игре, сам игрок с этим именем
+     * войти не сможет — сервер увидит дублирующийся вход. Поведение осознанное и такое же,
+     * как в Carpet.
+     *
+     * @return сообщение об ошибке, если она видна сразу, иначе {@code null}
      */
     public static @Nullable String spawn(final MinecraftServer server,
                                          final String name,
@@ -83,7 +108,8 @@ public final class LabBotRegistry {
                                          final float yaw,
                                          final float pitch,
                                          final GameType gameMode,
-                                         final boolean flying) {
+                                         final boolean flying,
+                                         final Consumer<Component> feedback) {
         if (name.isBlank() || name.length() > 16) {
             return "имя бота должно быть от 1 до 16 символов";
         }
@@ -94,14 +120,69 @@ public final class LabBotRegistry {
         if (server.getPlayerList().getPlayerByName(name) != null) {
             return "игрок с именем '" + name + "' уже на сервере";
         }
+        if (!SPAWNING.add(key)) {
+            return "бот '" + name + "' уже создаётся";
+        }
 
-        // Offline-UUID: боту не нужен профиль Mojang, и обращаться к их серверам
-        // ради стенда незачем. Как следствие, у бота не будет скина.
-        final UUID uuid = UUIDUtil.createOfflinePlayerUUID(name);
-        if (server.getPlayerList().getPlayer(uuid) != null) {
+        CompletableFuture
+            .supplyAsync(() -> identity(server, name), Util.backgroundExecutor())
+            .thenCompose(identity -> ResolvableProfile.createUnresolved(identity.id())
+                .resolveProfile(server.services().profileResolver())
+                // Профиля может не быть вовсе: имя выдумано или сервер без сети.
+                // Это не ошибка — бот просто останется без скина.
+                .exceptionally(t -> identity.toUncompletedGameProfile())
+                .thenApply(resolved -> resolved.name().isEmpty()
+                    ? identity.toUncompletedGameProfile() : resolved))
+            .whenCompleteAsync((profile, error) -> {
+                SPAWNING.remove(key);
+                if (error != null) {
+                    LOGGER.error("Не удалось получить профиль для бота {}", name, error);
+                    feedback.accept(Component.literal("не удалось получить профиль: " + error));
+                    return;
+                }
+                final String failure = create(server, profile, level, pos, yaw, pitch, gameMode, flying);
+                if (failure != null) {
+                    feedback.accept(Component.literal(failure));
+                }
+            }, server);
+        return null;
+    }
+
+    /**
+     * Кто это по имени. Сначала спрашиваем кэш имён сервера: для существующего игрока он
+     * вернёт настоящий UUID, и бот получит его скин. Для выдуманного имени останется
+     * offline-UUID, как и раньше.
+     *
+     * <p>Выполняется вне главного потока: разрешение имени ходит в сеть.
+     */
+    private static NameAndId identity(final MinecraftServer server, final String name) {
+        try {
+            final Optional<NameAndId> found = server.services().nameToIdCache().get(name);
+            if (found.isPresent()) {
+                return found.get();
+            }
+        } catch (final Throwable t) {
+            LOGGER.debug("Имя {} не разрешилось, берём offline-UUID", name, t);
+        }
+        return new NameAndId(UUIDUtil.createOfflinePlayerUUID(name), name);
+    }
+
+    /** Собственно создание. Только главный поток. */
+    private static @Nullable String create(final MinecraftServer server,
+                                           final GameProfile profile,
+                                           final ServerLevel level,
+                                           final Vec3 pos,
+                                           final float yaw,
+                                           final float pitch,
+                                           final GameType gameMode,
+                                           final boolean flying) {
+        final String key = profile.name().toLowerCase(Locale.ROOT);
+        if (BOTS.containsKey(key)) {
+            return "бот с именем '" + profile.name() + "' уже существует";
+        }
+        if (server.getPlayerList().getPlayer(profile.id()) != null) {
             return "игрок с таким UUID уже на сервере";
         }
-        final GameProfile profile = new GameProfile(uuid, name);
 
         final LabBot bot = new LabBot(server, level, profile, ClientInformation.createDefault());
         final LabBotConnection connection = new LabBotConnection();
@@ -115,10 +196,14 @@ public final class LabBotRegistry {
         // PlayerList.remove при этом работает и раньше — терялась только загрузка.
         loadSavedData(server, bot);
 
+        // Бот мог сохраниться верхом; иначе он появится на старом транспорте.
+        bot.stopRiding();
+
         // placeNewPlayer размещает игрока по сохранённым/спавновым координатам.
         // Переносим на запрошенную точку уже после регистрации, чтобы chunk tickets
         // и NearbyPlayers пересчитались обычным путём.
         bot.teleportTo(level, pos.x, pos.y, pos.z, java.util.Set.of(), yaw, pitch, true);
+        bot.setYHeadRot(yaw);
         bot.setHealth(bot.getMaxHealth());
         bot.gameMode.changeGameModeForPlayer(gameMode);
         bot.getAbilities().flying = flying;
@@ -128,11 +213,20 @@ public final class LabBotRegistry {
         if (stepHeight != null) {
             stepHeight.setBaseValue(0.6D);
         }
+        // Все слои скина. У бота нет клиента, который прислал бы настройки модели,
+        // поэтому без этой строки не видно ни второго слоя, ни плаща.
+        bot.getEntityData().set(Avatar.DATA_PLAYER_MODE_CUSTOMISATION, (byte) 0x7F);
+
+        // Явная рассылка поворота и позиции: клиенты, которым бота уже показали,
+        // иначе увидят его смотрящим в другую сторону до первого движения.
+        server.getPlayerList().broadcastAll(
+            new ClientboundRotateHeadPacket(bot, (byte) (bot.yHeadRot * 256 / 360)), level.dimension());
+        server.getPlayerList().broadcastAll(
+            ClientboundEntityPositionSyncPacket.of(bot), level.dimension());
 
         BOTS.put(key, bot);
         return null;
     }
-
 
     /**
      * Читает сохранённые данные бота: инвентарь, здоровье, опыт, эндер-сундук,
@@ -169,8 +263,8 @@ public final class LabBotRegistry {
     }
 
     /**
-     * Удаляет всех ботов. Обязательно при остановке сервера и при выходе из CONTROL:
-     * оставленный бот продолжал бы держать чанки и занимать мобкап.
+     * Удаляет всех ботов. Обязательно при остановке сервера: оставленный бот продолжал бы
+     * держать чанки и занимать мобкап.
      */
     public static int removeAll() {
         final List<String> names = new ArrayList<>(BOTS.keySet());
@@ -198,6 +292,4 @@ public final class LabBotRegistry {
     public static int count() {
         return BOTS.size();
     }
-
-
 }
