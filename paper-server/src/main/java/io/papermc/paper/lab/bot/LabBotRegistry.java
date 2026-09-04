@@ -80,7 +80,7 @@ public final class LabBotRegistry {
             try {
                 bot.tickConnectionPhase();
             } catch (final Throwable t) {
-                LOGGER.error("Ошибка тика бота {}; бот удаляется", bot.labName(), t);
+                LOGGER.error("Bot {} failed to tick, removing it", bot.labName(), t);
                 remove(bot.labName());
             }
         }
@@ -111,7 +111,7 @@ public final class LabBotRegistry {
                                          final boolean flying,
                                          final Consumer<Component> feedback) {
         if (name.isBlank()) {
-            return "имя бота не может быть пустым";
+            return "bot name cannot be empty";
         }
         // Имя в игре — с суффиксом, скин — по имени без него. Разделение нужно, чтобы
         // бот выглядел как нужный игрок, но не занимал его UUID: иначе сам игрок войти
@@ -120,17 +120,17 @@ public final class LabBotRegistry {
         final String skinName = name;
         final String inGameName = suffix.isEmpty() ? name : name + suffix;
         if (inGameName.length() > 16) {
-            return "имя с суффиксом длиннее 16 символов: '" + inGameName + "'";
+            return "name with suffix is longer than 16 chars: '" + inGameName + "'";
         }
         final String key = inGameName.toLowerCase(Locale.ROOT);
         if (BOTS.containsKey(key)) {
-            return "бот с именем '" + inGameName + "' уже существует";
+            return "bot '" + inGameName + "' already exists";
         }
         if (server.getPlayerList().getPlayerByName(inGameName) != null) {
-            return "игрок с именем '" + inGameName + "' уже на сервере";
+            return "player '" + inGameName + "' is already online";
         }
         if (!SPAWNING.add(key)) {
-            return "бот '" + inGameName + "' уже создаётся";
+            return "bot '" + inGameName + "' is already being created";
         }
 
         CompletableFuture
@@ -145,8 +145,8 @@ public final class LabBotRegistry {
             .whenCompleteAsync((profile, error) -> {
                 SPAWNING.remove(key);
                 if (error != null) {
-                    LOGGER.error("Не удалось получить профиль для бота {}", inGameName, error);
-                    feedback.accept(Component.literal("не удалось получить профиль: " + error));
+                    LOGGER.error("Could not resolve the profile for bot {}", inGameName, error);
+                    feedback.accept(Component.literal("could not resolve profile: " + error));
                     return;
                 }
                 // Всё, что дальше, выполняется в колбэке future. Исключение отсюда
@@ -163,8 +163,8 @@ public final class LabBotRegistry {
                         feedback.accept(Component.literal(failure));
                     }
                 } catch (final Throwable t) {
-                    LOGGER.error("Не удалось создать бота {}", inGameName, t);
-                    feedback.accept(Component.literal("не удалось создать бота: " + t));
+                    LOGGER.error("Could not create bot {}", inGameName, t);
+                    feedback.accept(Component.literal("could not create bot: " + t));
                 }
             }, server);
         return null;
@@ -203,7 +203,7 @@ public final class LabBotRegistry {
                 return found.get();
             }
         } catch (final Throwable t) {
-            LOGGER.debug("Имя {} не разрешилось, берём offline-UUID", name, t);
+            LOGGER.debug("Name {} did not resolve, using an offline UUID", name, t);
         }
         return new NameAndId(UUIDUtil.createOfflinePlayerUUID(name), name);
     }
@@ -219,10 +219,10 @@ public final class LabBotRegistry {
                                            final boolean flying) {
         final String key = profile.name().toLowerCase(Locale.ROOT);
         if (BOTS.containsKey(key)) {
-            return "бот с именем '" + profile.name() + "' уже существует";
+            return "bot '" + profile.name() + "' already exists";
         }
         if (server.getPlayerList().getPlayer(profile.id()) != null) {
-            return "игрок с таким UUID уже на сервере";
+            return "a player with that UUID is already online";
         }
 
         final LabBot bot = new LabBot(server, level, profile, ClientInformation.createDefault());
@@ -284,7 +284,7 @@ public final class LabBotRegistry {
                     bot.loadAndSpawnParentVehicle(input);
                 });
         } catch (final Throwable t) {
-            LOGGER.error("Не удалось прочитать сохранённые данные бота {}", bot.labName(), t);
+            LOGGER.error("Could not read saved data for bot {}", bot.labName(), t);
         }
     }
 

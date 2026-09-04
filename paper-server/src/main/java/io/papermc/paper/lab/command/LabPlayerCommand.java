@@ -209,7 +209,7 @@ public final class LabPlayerCommand {
         final String name = StringArgumentType.getString(ctx, "name");
         final LabBot bot = LabBotRegistry.get(name);
         if (bot == null) {
-            ctx.getSource().sendFailure(Component.literal("нет бота " + name));
+            ctx.getSource().sendFailure(Component.literal("no bot " + name));
         }
         return bot;
     }
@@ -307,12 +307,12 @@ public final class LabPlayerCommand {
         final String name = StringArgumentType.getString(ctx, "name");
         if ("all".equalsIgnoreCase(name) || "*".equals(name)) {
             final int removed = LabBotRegistry.removeAll();
-            source.sendSuccess(() -> Component.literal("убрано: " + removed)
+            source.sendSuccess(() -> Component.literal("removed: " + removed)
                 .withStyle(ChatFormatting.DARK_GRAY), false);
             return removed;
         }
         if (!LabBotRegistry.remove(name)) {
-            source.sendFailure(Component.literal("нет бота " + name));
+            source.sendFailure(Component.literal("no bot " + name));
             return 0;
         }
         return 1;
@@ -320,7 +320,7 @@ public final class LabPlayerCommand {
 
     private static int list(final CommandSourceStack source) {
         if (LabBotRegistry.count() == 0) {
-            source.sendSuccess(() -> Component.literal("ботов нет").withStyle(ChatFormatting.DARK_GRAY), false);
+            source.sendSuccess(() -> Component.literal("no bots").withStyle(ChatFormatting.DARK_GRAY), false);
             return 0;
         }
         for (final LabBot bot : LabBotRegistry.bots()) {

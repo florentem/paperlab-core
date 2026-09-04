@@ -88,7 +88,7 @@ public final class LabTickCommand {
 
     private static int stopWarp(final CommandSourceStack source) {
         final boolean stopped = source.getServer().tickRateManager().stopSprinting();
-        source.sendSuccess(() -> Component.literal(stopped ? "warp stop" : "не был запущен")
+        source.sendSuccess(() -> Component.literal(stopped ? "warp stop" : "was not running")
             .withStyle(ChatFormatting.DARK_GRAY), false);
         return stopped ? 1 : 0;
     }

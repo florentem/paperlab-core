@@ -32,15 +32,15 @@ public final class SpawnTrace {
      */
     public enum Outcome {
         /** Категория даже не рассматривалась: бюджет чанка исчерпан. */
-        CAP_FULL("кап"),
+        CAP_FULL("cap"),
         /** Бюджет был, попытки пошли. */
-        ATTEMPT("проходов"),
+        ATTEMPT("passes"),
         /** Позиция не подошла: свет, блок, высота, расстояние до игрока. */
-        POSITION("позиция"),
+        POSITION("position"),
         /** Плагин отменил через PreCreatureSpawnEvent. */
-        PLUGIN("плагин"),
+        PLUGIN("plugin"),
         /** Моб создан и добавлен в мир. */
-        SPAWNED("заспавнено");
+        SPAWNED("spawned");
 
         private final String label;
 
