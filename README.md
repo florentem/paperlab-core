@@ -1,99 +1,103 @@
-Paper [![Version](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Fartifactory.papermc.io%2Fartifactory%2Funiverse%2Fio%2Fpapermc%2Fpaper%2Fpaper-api%2Fmaven-metadata.xml&strategy=highestVersion&filter=26.2*&label=version&color=%23344ceb
-)](https://papermc.io/downloads/paper)
-[![Paper Build Status](https://img.shields.io/github/actions/workflow/status/PaperMC/Paper/build.yml?branch=main)](https://github.com/PaperMC/Paper/actions)
-[![Discord](https://img.shields.io/discord/289587909051416579.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/papermc)
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/papermc?label=GitHub%20Sponsors)](https://github.com/sponsors/PaperMC)
-[![Open Collective](https://img.shields.io/opencollective/all/papermc?label=OpenCollective%20Sponsors)](https://opencollective.com/papermc)
-===========
+# PaperLab — ядро
 
-The most widely used, high-performance Minecraft server that aims to fix gameplay and mechanics inconsistencies.
+Форк [Paper](https://github.com/PaperMC/Paper) 26.2 для исследования ферм Minecraft.
+Даёт инструменты в духе Carpet, адаптированные под особенности Paper — в первую очередь
+под **локальные мобкапы**, которых в ваниле и Fabric-модах нет.
 
+Вторая половина проекта — плагин **PaperLab**, он лежит отдельно. Здесь только то, чего
+плагином сделать нельзя.
 
-**Support and Project Discussion:**
-- [Our forums](https://forums.papermc.io/) or [Discord](https://discord.gg/papermc)
+---
 
-How To (Server Admins)
-------
-Paperclip is a jar file that you can download and run just like a normal jar file.
+## Что добавляет форк
 
-Download Paper from our [downloads page](https://papermc.io/downloads/paper).
+Одна ветка `lab`, один патч: **`paper-server/patches/features/0035-Paper-Lab-hooks.patch`**,
+12 файлов и 67 добавленных строк. Держать его маленьким — сознательное решение: каждая
+строка патча оплачивается при обновлении upstream.
 
-Run the Paperclip jar directly from your server. Just like old times.
+| Файл upstream | Зачем тронут |
+|---|---|
+| `ChunkMap` (4 точки) | наблюдатель вне переписи мобкапа, вне backoff, не расширяет область спавна, не грузит чанки |
+| `RegionizedPlayerChunkLoader` (Moonrise) | наблюдатель не делает ticking ни одного чанка |
+| `ActivationRange` | наблюдатель не будит мобов (EAR) |
+| `LivingEntity.canBeSeenByAnyone` | мобы не выбирают наблюдателя целью |
+| `NaturalSpawner` | наблюдатель не режет бюджет чанка + 4 метки трассы спавна |
+| `PlayerList.remove` | снять режим наблюдателя при выходе |
+| `MinecraftServer.tickChildren` | `doTick()` бота в фазе соединений |
+| `Commands` | регистрация `/player` и узлов `toggle`/`warp` в ванильный `/tick` |
+| `FillCommand`, `SetBlockCommand`, `CloneCommands` | правило `fillUpdates` |
+| `ServerDebugSubscribers` | отладочные подписки по праву, а не только оператору |
 
-* Documentation on using Paper: [docs.papermc.io](https://docs.papermc.io)
-* For a sneak peek at upcoming features, [see here](https://github.com/PaperMC/Paper/projects)
+Основной код живёт обычным исходником в `paper-server/src/main/java/io/papermc/paper/lab/`
+и в патч-систему не входит: `ghost/`, `spawn/`, `bot/`, `rules/`, `command/LabPlayerCommand`,
+`command/LabTickCommand`.
 
-How To (Plugin Developers)
-------
-* See our API [here](paper-api)
-* See upcoming, pending, and recently added API [here](https://github.com/orgs/PaperMC/projects/2/views/4)
-* Paper API javadocs here: [papermc.io/javadocs](https://papermc.io/javadocs/)
-#### Repository (for paper-api)
-See [the docs](https://docs.papermc.io/paper/dev/project-setup/#adding-paper-as-a-dependency) for more details.
-##### Gradle
-```kotlin
-repositories {
-    maven {
-        url = uri("https://repo.papermc.io/repository/maven-public/")
-    }
-}
+---
 
-dependencies {
-    compileOnly("io.papermc.paper:paper-api:26.2.build.+")
-}
+## Три вещи, ради которых всё это написано
 
-java {
-    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
-}
+**Режим наблюдателя.** Игрок перестаёт влиять на симуляцию, но продолжает
+взаимодействовать с миром: блоки ставятся и ломаются, контейнеры открываются. Не грузит
+чанки, не занимает мобкап, не будит мобов, не замечается ими.
+
+Измерено: игрок с `simulation-distance=5` держит 121 тикающий чанк (11×11), наблюдатель —
+**ноль**. Одной персональной дистанции симуляции для этого мало: `tickMap` в Moonrise
+с радиусом 0 всё равно покрывает чанк под самим игроком, и энтити в нём оживают, стоит
+туда войти. Поэтому гасится очередь `tickingQueue` — единственная точка, где чанк
+переходит в стадию TICK.
+
+**Трасса спавна.** Движок не сообщает, на каком шаге остановилась попытка появления моба,
+а причин несколько и они разного смысла:
+
 ```
-##### Maven
-
-```xml
-<repository>
-    <id>papermc</id>
-    <url>https://repo.papermc.io/repository/maven-public/</url>
-</repository>
-```
-
-```xml
-<dependency>
-    <groupId>io.papermc.paper</groupId>
-    <artifactId>paper-api</artifactId>
-    <version>[26.2.build,)</version>
-    <scope>provided</scope>
-</dependency>
+spawn monster  cap 113307 · passes 4 · position 0 · plugin 0 · spawned 1
+spawn ambient  cap 0 · passes 113311 · position 479805 · plugin 0 · spawned 0
 ```
 
-How To (Compiling Jar From Source)
-------
-To compile Paper, you need JDK 25 and an internet connection.
+У монстров всё упирается в кап, у ambient кап свободен, но не проходит позиция.
+Столбец `plugin` — единственная причина, которой в чистом Paper быть не должно.
 
-Clone this repo, run `./gradlew applyPatches`, then `./gradlew createPaperclipJar` from your terminal. You can find the compiled jar in the `paper-server/build/libs` directory.
+Единицы разные, складывать столбцы нельзя: `cap` и `passes` считаются на проход
+«чанк × категория», остальные — на каждую пробуемую позицию.
 
-To get a full list of tasks, run `./gradlew tasks`.
+**Боты.** Настоящие `ServerPlayer` без клиента. `doTick()` вызывается в фазе соединений —
+ровно там и в том же порядке относительно `tick()`, что у живого игрока. Плагином это
+недостижимо: его планировщик работает в начале `tickChildren`, до фазы уровней.
 
-How To (Pull Request)
-------
-See [Contributing](CONTRIBUTING.md)
+---
 
-Old Versions (1.21.3 and below)
-------
-For branches of versions 1.8-1.21.3, please see our [archive repository](https://github.com/PaperMC/Paper-archive).
+## Сборка
 
-Support Us
-------
-First of all, thank you for considering helping out, we really appreciate that!
+Нужен **JDK 25**.
 
-PaperMC has various recurring expenses, mostly related to infrastructure. Paper uses [Open Collective](https://opencollective.com/) via the [Open Source Collective fiscal host](https://opencollective.com/opensource) to manage expenses. Open Collective allows us to be extremely transparent, so you can always see how your donations are used. You can read more about financially supporting PaperMC [on our website](https://papermc.io/sponsors).
+```bash
+./gradlew applyPatches         # развернуть src/minecraft из патчей
+./gradlew createPaperclipJar   # собрать запускаемый jar
+```
 
-You can find our collective [here](https://opencollective.com/papermc), or you can donate via GitHub Sponsors [here](https://github.com/sponsors/PaperMC), which will also go towards the collective.
+Готовый jar: `paper-server/build/libs/paper-paperclip-26.2.local-SNAPSHOT.jar`.
 
-Special Thanks To:
--------------
+### Правило, которое стоило сломанного дерева
 
-[![YourKit-Logo](https://www.yourkit.com/images/yklogo.png)](https://www.yourkit.com/)
+`rebuildFeaturePatches` **нельзя** запускать в одном вызове Gradle со сборкой: он сбрасывает
+внутренний репозиторий `paper-server/src/minecraft/java` и заново проигрывает серию, а
+компиляция в это время читает исходники. Получаются ошибки в файлах, которых вы не трогали.
 
-[YourKit](https://www.yourkit.com/), makers of the outstanding java profiler, support open source projects of all kinds with their full featured [Java](https://www.yourkit.com/java/profiler) and [.NET](https://www.yourkit.com/.net/profiler) application profilers. We thank them for granting Paper an OSS license so that we can make our software the best it can be.
+```bash
+./gradlew rebuildFeaturePatches            # правка из внутреннего коммита -> в патч
+git status --short paper-server/patches    # должен измениться ТОЛЬКО 00NN-*.patch
+./gradlew applyPatches                     # восстановить дерево
+./gradlew createPaperclipJar               # и только теперь собирать
+```
 
-All our sponsors!  
-[![Sponsor Image](https://raw.githubusercontent.com/PaperMC/papermc.io/data/sponsors.png)](https://papermc.io/sponsors)
+Остальные грабли, пойманные по ходу, — в `outputs/fork-build-notes-ru.md` основного
+репозитория проекта.
+
+---
+
+## Лицензия
+
+Наследуется от Paper: **GPL-3.0** для серверной части, MIT для API. Подробности —
+[LICENSE.md](LICENSE.md), исходный README апстрима — [README-Paper.md](README-Paper.md).
+
+Всё, что добавлено этим форком, распространяется на тех же условиях.
