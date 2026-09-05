@@ -32,6 +32,14 @@
 и в патч-систему не входит: `ghost/`, `spawn/`, `bot/`, `rules/`, `command/LabPlayerCommand`,
 `command/LabTickCommand`.
 
+### Интеграция с Capture & Playback
+
+Патч **`paper-server/patches/features/0036-Capture-and-Playback-hooks.patch`** (2 файла, 8 чистых строк) добавляет минимальные точки перехвата для мода [Capture & Playback](https://modrinth.com/mod/capture-playback) (автор [G4me4u](https://github.com/G4me4u)):
+* `ServerLevel`: вызовы в начале/конце `tick()` и внутри цикла `runBlockEvents()` для синхронизации микротиков и сброса стримов;
+* `SignalGetter`: инъекция редстоун-сигнала 15 в `getSignal` и `getControlInputSignal` при активном воспроизведении дорожки.
+
+Вся внутренняя логика и состояние стримов вынесены в пакет `io.papermc.paper.lab.cplay/` (`CPlayManager`, стримы и структуры событий), гарантируя нулевой оверхед в обычном режиме игры.
+
 ---
 
 ## Три вещи, ради которых всё это написано
@@ -101,3 +109,4 @@ git status --short paper-server/patches    # должен измениться �
 [LICENSE.md](LICENSE.md), исходный README апстрима — [README-Paper.md](README-Paper.md).
 
 Всё, что добавлено этим форком, распространяется на тех же условиях.
+Форматы взаимодействия совместимы с клиентским модом Capture & Playback (автор [G4me4u](https://modrinth.com/mod/capture-playback)); код хуков ядра и менеджера стримов написан заново под GPL-3.0.
