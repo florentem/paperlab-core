@@ -11,38 +11,43 @@
 
 ## Что добавляет форк
 
-Одна ветка `lab`, один патч: **`paper-server/patches/features/0035-Paper-Lab-hooks.patch`**,
-12 файлов и 67 добавленных строк. Держать его маленьким — сознательное решение: каждая
-строка патча оплачивается при обновлении upstream.
+Ветка `lab` добавляет четыре минимальных feature-патча:
 
-| Файл upstream | Зачем тронут |
-|---|---|
-| `ChunkMap` (4 точки) | наблюдатель вне переписи мобкапа, вне backoff, не расширяет область спавна, не грузит чанки |
-| `RegionizedPlayerChunkLoader` (Moonrise) | наблюдатель не делает ticking ни одного чанка |
-| `ActivationRange` | наблюдатель не будит мобов (EAR) |
-| `LivingEntity.canBeSeenByAnyone` | мобы не выбирают наблюдателя целью |
-| `NaturalSpawner` | наблюдатель не режет бюджет чанка + 4 метки трассы спавна |
-| `PlayerList.remove` | снять режим наблюдателя при выходе |
-| `MinecraftServer.tickChildren` | `doTick()` бота в фазе соединений |
-| `Commands` | регистрация `/player` и узлов `toggle`/`warp` в ванильный `/tick` |
-| `FillCommand`, `SetBlockCommand`, `CloneCommands` | правило `fillUpdates` |
-| `ServerDebugSubscribers` | отладочные подписки по праву, а не только оператору |
+1. **`0035-Paper-Lab-hooks.patch`** — базовые точки перехвата:
+   * `ChunkMap` (4 точки): наблюдатель вне переписи мобкапа, вне backoff, не расширяет область спавна, не грузит чанки;
+   * `RegionizedPlayerChunkLoader` (Moonrise): наблюдатель не делает ticking ни одного чанка;
+   * `ActivationRange`: наблюдатель не будит мобов (EAR);
+   * `LivingEntity.canBeSeenByAnyone`: мобы не выбирают наблюдателя целью;
+   * `NaturalSpawner`: наблюдатель не режет бюджет чанка + 4 метки трассы спавна;
+   * `PlayerList.remove`: снять режим наблюдателя при выходе;
+   * `MinecraftServer.tickChildren`: `doTick()` бота в фазе соединений;
+   * `Commands`: регистрация `/player` и узлов `toggle`/`warp` в ванильный `/tick`;
+   * `FillCommand`, `SetBlockCommand`, `CloneCommands`: правило `fillUpdates`;
+   * `ServerDebugSubscribers`: отладочные подписки по праву, а не только оператору.
 
-Основной код живёт обычным исходником в `paper-server/src/main/java/io/papermc/paper/lab/`
-и в патч-систему не входит: `ghost/`, `spawn/`, `bot/`, `rules/`, `command/LabPlayerCommand`,
-`command/LabTickCommand`.
+2. **`0036-Capture-and-Playback-hooks.patch`** — интеграция с модом [Capture & Playback](https://modrinth.com/mod/capture-playback) (автор [G4me4u](https://github.com/G4me4u)):
+   * `ServerLevel`: вызовы в начале/конце `tick()` и внутри цикла `runBlockEvents()` для синхронизации микротиков и сброса стримов;
+   * `SignalGetter`: инъекция редстоун-сигнала 15 в `getSignal` и `getControlInputSignal` при активном воспроизведении дорожки.
 
-### Интеграция с Capture & Playback
+3. **`0037-Paper-Lab-item-movement-and-microtiming-hooks.patch`** — хуки логгеров Carpet-TIS-Addition:
+   * `ItemEntity`: трекинг создания, деспавна (5 минут) и гибели от урона (`LabItemTracker`);
+   * `Entity`: пошаговая раскладка этапов расчета перемещения в `move()` — поршни, сник, коллизии (`LabMovementTracker`);
+   * `ServerLevel` и `Level`: перехват событий блоков `doBlockEvent` и смены состояний `setBlock` (`LabMicroTiming`).
 
-Патч **`paper-server/patches/features/0036-Capture-and-Playback-hooks.patch`** (2 файла, 8 чистых строк) добавляет минимальные точки перехвата для мода [Capture & Playback](https://modrinth.com/mod/capture-playback) (автор [G4me4u](https://github.com/G4me4u)):
-* `ServerLevel`: вызовы в начале/конце `tick()` и внутри цикла `runBlockEvents()` для синхронизации микротиков и сброса стримов;
-* `SignalGetter`: инъекция редстоун-сигнала 15 в `getSignal` и `getControlInputSignal` при активном воспроизведении дорожки.
+4. **`0038-Paper-Lab-per-world-tick-hooks.patch`** — независимый тикрейт и заморозка по мирам (Per-World Tick):
+   * `ServerLevelTickRateManager`: персональный менеджер тикрейта для каждого измерения со своей очередью шагов (`step`), спринтов (`sprint`) и заморозки (`freeze`);
+   * `MinecraftServer`: планировщик тиков ориентируется на минимальный интервал среди активных миров, тикает только незамороженные миры и их часы;
+   * `TickCommand`: перенаправление `/tick` на менеджер мира из контекста отправителя (`/execute in <мир> run tick ...`);
+   * `PlayerList`: отправка сетевых пакетов тикрейта (`ClientboundTickingStatePacket`, `ClientboundTickingStepPacket`) игрокам конкретного мира;
+   * `org.bukkit.World`: метод `world.getTickManager()` в Paper API.
 
-Вся внутренняя логика и состояние стримов вынесены в пакет `io.papermc.paper.lab.cplay/` (`CPlayManager`, стримы и структуры событий), гарантируя нулевой оверхед в обычном режиме игры.
+Основной код живёт обычными исходниками в `paper-server/src/main/java/io/papermc/paper/lab/`
+и в патч-систему не входит: `ghost/`, `spawn/`, `bot/`, `rules/`, `command/`, `cplay/`,
+`item/`, `movement/`, `microtiming/`, `tick/`.
 
 ---
 
-## Три вещи, ради которых всё это написано
+## Ключевые возможности форка
 
 **Режим наблюдателя.** Игрок перестаёт влиять на симуляцию, но продолжает
 взаимодействовать с миром: блоки ставятся и ломаются, контейнеры открываются. Не грузит
@@ -71,6 +76,17 @@ spawn ambient  cap 0 · passes 113311 · position 479805 · plugin 0 · spawned 
 **Боты.** Настоящие `ServerPlayer` без клиента. `doTick()` вызывается в фазе соединений —
 ровно там и в том же порядке относительно `tick()`, что у живого игрока. Плагином это
 недостижимо: его планировщик работает в начале `tickChildren`, до фазы уровней.
+
+**Независимый тикрейт по мирам (Per-World Tick).** В ванили `/tick` глобален для всего
+сервера. Форк внедряет независимые `ServerLevelTickRateManager` по мирам при включении
+правила `perWorldTick`. Это позволяет заморозить оверворлд и прогонять замеры в Энде на
+полной скорости или пошагово (`step`), изолировать команды `/tick rate` через `/execute in`,
+а плагинам даёт API `world.getTickManager()`. При отключении правила все миры плавно
+синхронизируют тикрейт и заморозку с сервером.
+
+**Глубокая диагностика ферм (Carpet-TIS-Addition).** Внутренние хуки в `Entity.move()`,
+`ItemEntity` и событиях блоков дают логгерам `/log item`, `/log movement` и `/log microtiming`
+полную точность измерений без оверхеда в отключённом состоянии.
 
 ---
 
