@@ -28,13 +28,62 @@ public final class LabMicroTiming {
         void onTileTick(Level level, BlockPos pos, Block block, DyeColor color);
     }
 
+    public enum MarkerType {
+        REGULAR,
+        END_ROD
+    }
+
+    public record Marker(DyeColor color, MarkerType type) {}
+
+    public enum CycleResultType {
+        ADDED,
+        SWITCHED,
+        REMOVED,
+        COLOR_CHANGED
+    }
+
+    public record CycleResult(CycleResultType resultType, @Nullable Marker marker) {}
+
+    public enum Phase {
+        NONE(""),
+        TILE_TICK("tile_tick"),
+        BLOCK_EVENT("block_event");
+
+        private final String label;
+        Phase(String label) { this.label = label; }
+        public String label() { return label; }
+    }
+
     private static final List<Listener> LISTENERS = new CopyOnWriteArrayList<>();
     public static volatile boolean enabled = false;
 
-    /** Маркеры красителей, установленные игроками: pos -> color */
-    private static final Map<BlockPos, DyeColor> DYE_MARKERS = new ConcurrentHashMap<>();
+    private static final ThreadLocal<Integer> CALL_DEPTH = ThreadLocal.withInitial(() -> 0);
+    private static final ThreadLocal<Phase> CURRENT_PHASE = ThreadLocal.withInitial(() -> Phase.NONE);
+
+    /** Маркеры красителей, установленные игроками: pos -> marker */
+    private static final Map<BlockPos, Marker> DYE_MARKERS = new ConcurrentHashMap<>();
 
     private LabMicroTiming() {
+    }
+
+    public static int currentDepth() {
+        return CALL_DEPTH.get();
+    }
+
+    public static Phase currentPhase() {
+        return CURRENT_PHASE.get();
+    }
+
+    public static void pushDepth() {
+        CALL_DEPTH.set(CALL_DEPTH.get() + 1);
+    }
+
+    public static void popDepth() {
+        CALL_DEPTH.set(Math.max(0, CALL_DEPTH.get() - 1));
+    }
+
+    public static void setPhase(final Phase phase) {
+        CURRENT_PHASE.set(phase);
     }
 
     public static void addListener(final Listener listener) {
@@ -49,8 +98,36 @@ public final class LabMicroTiming {
         return enabled && !LISTENERS.isEmpty();
     }
 
+    public static CycleResult cycleMarker(final BlockPos pos, final DyeColor color) {
+        final BlockPos immutablePos = pos.immutable();
+        final Marker existing = DYE_MARKERS.get(immutablePos);
+        if (existing == null) {
+            final Marker newMarker = new Marker(color, MarkerType.REGULAR);
+            DYE_MARKERS.put(immutablePos, newMarker);
+            return new CycleResult(CycleResultType.ADDED, newMarker);
+        }
+        if (existing.color() == color) {
+            if (existing.type() == MarkerType.REGULAR) {
+                final Marker switched = new Marker(color, MarkerType.END_ROD);
+                DYE_MARKERS.put(immutablePos, switched);
+                return new CycleResult(CycleResultType.SWITCHED, switched);
+            } else {
+                DYE_MARKERS.remove(immutablePos);
+                return new CycleResult(CycleResultType.REMOVED, null);
+            }
+        } else {
+            final Marker changed = new Marker(color, MarkerType.REGULAR);
+            DYE_MARKERS.put(immutablePos, changed);
+            return new CycleResult(CycleResultType.COLOR_CHANGED, changed);
+        }
+    }
+
     public static void setDyeMarker(final BlockPos pos, final DyeColor color) {
-        DYE_MARKERS.put(pos.immutable(), color);
+        DYE_MARKERS.put(pos.immutable(), new Marker(color, MarkerType.REGULAR));
+    }
+
+    public static @Nullable Marker getMarker(final BlockPos pos) {
+        return DYE_MARKERS.get(pos);
     }
 
     public static void removeDyeMarker(final BlockPos pos) {
@@ -65,10 +142,18 @@ public final class LabMicroTiming {
         if (!hasListeners()) {
             return null;
         }
-        // 1. Проверяем маркер красителя
-        final DyeColor dye = DYE_MARKERS.get(pos);
-        if (dye != null) {
-            return dye;
+        // 1. Проверяем маркер красителя на самом блоке
+        final Marker marker = DYE_MARKERS.get(pos);
+        if (marker != null) {
+            return marker.color();
+        }
+
+        // Проверяем соседние блоки на наличие маркера типа END_ROD
+        for (final Direction dir : Direction.values()) {
+            final Marker neighborMarker = DYE_MARKERS.get(pos.relative(dir));
+            if (neighborMarker != null && neighborMarker.type() == MarkerType.END_ROD) {
+                return neighborMarker.color();
+            }
         }
 
         // 2. Проверяем маркировку шерстью как в Carpet-TIS-Addition

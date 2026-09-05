@@ -5,17 +5,71 @@ Subject: [PATCH] Paper Lab item, movement, and microtiming hooks
 
 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 1d6e4ee75875264210c9fbd80e45f000e535afbe..a5e88a2d865ce637f79e513ec517514fd29e5588 100644
+index 1d6e4ee75875264210c9fbd80e45f000e535afbe..8cd61741bd4fe6079b1e9302c46356707f17359b 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -2053,6 +2053,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+@@ -845,7 +845,12 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         if (!this.isDebug() && runs) {
+             long tick = this.getGameTime();
+             profiler.push("blockTicks");
++            io.papermc.paper.lab.microtiming.LabMicroTiming.setPhase(io.papermc.paper.lab.microtiming.LabMicroTiming.Phase.TILE_TICK); // Paper Lab - /log microtiming
++            try {
+             this.blockTicks.tick(tick, paperConfig().environment.maxBlockTicks, this::tickBlock); // Paper - configurable max block ticks
++            } finally {
++                io.papermc.paper.lab.microtiming.LabMicroTiming.setPhase(io.papermc.paper.lab.microtiming.LabMicroTiming.Phase.NONE); // Paper Lab - /log microtiming
++            }
+             profiler.popPush("fluidTicks");
+             this.fluidTicks.tick(tick, paperConfig().environment.maxFluidTicks, this::tickFluid); // Paper - configurable max fluid ticks
+             profiler.pop();
+@@ -860,7 +865,12 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         this.getChunkSource().tick(haveTime, true);
+         profiler.popPush("blockEvents");
+         if (runs) {
++            io.papermc.paper.lab.microtiming.LabMicroTiming.setPhase(io.papermc.paper.lab.microtiming.LabMicroTiming.Phase.BLOCK_EVENT); // Paper Lab - /log microtiming
++            try {
+             this.runBlockEvents();
++            } finally {
++                io.papermc.paper.lab.microtiming.LabMicroTiming.setPhase(io.papermc.paper.lab.microtiming.LabMicroTiming.Phase.NONE); // Paper Lab - /log microtiming
++            }
+         }
+ 
+         this.handlingTick = false;
+@@ -1366,7 +1376,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private void tickBlock(final BlockPos pos, final Block type) {
+         BlockState state = this.getBlockState(pos);
+         if (state.is(type)) {
++            io.papermc.paper.lab.microtiming.LabMicroTiming.onTileTick(this, pos, type); // Paper Lab - /log microtiming
++            io.papermc.paper.lab.microtiming.LabMicroTiming.pushDepth(); // Paper Lab - /log microtiming
++            try {
+             state.tick(this, pos, this.random);
++            } finally {
++                io.papermc.paper.lab.microtiming.LabMicroTiming.popDepth(); // Paper Lab - /log microtiming
++            }
+         }
+         // Paper start - rewrite chunk system
+         if ((++this.tickedBlocksOrFluids & 7L) != 0L) {
+@@ -2051,8 +2067,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             BlockEventData eventData = this.blockEvents.removeFirst();
+             io.papermc.paper.lab.cplay.CPlayManager.onBlockEventProcessed(this); // Paper Lab - Capture and Playback
              if (this.shouldTickBlocksAt(eventData.pos())) {
++                io.papermc.paper.lab.microtiming.LabMicroTiming.pushDepth(); // Paper Lab - /log microtiming
++                try {
                  if (this.doBlockEvent(eventData)) {
                      io.papermc.paper.lab.cplay.CPlayManager.onBlockEventSuccess(this, eventData); // Paper Lab - Capture and Playback
 +                    io.papermc.paper.lab.microtiming.LabMicroTiming.onBlockEvent(this, eventData.pos(), eventData.block(), eventData.paramA(), eventData.paramB()); // Paper Lab - /log microtiming
                      this.server
                          .getPlayerList()
                          .broadcast(
+@@ -2065,6 +2084,9 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+                             new ClientboundBlockEventPacket(eventData.pos(), eventData.block(), eventData.paramA(), eventData.paramB())
+                         );
+                 }
++                } finally {
++                    io.papermc.paper.lab.microtiming.LabMicroTiming.popDepth(); // Paper Lab - /log microtiming
++                }
+             } else {
+                 this.blockEventsToReschedule.add(eventData);
+             }
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
 index 56dc9019708d74f92d43d8a9ed37fba7d82b1877..56c577af9b7639af4d2179b7d3f00f6bf18617bf 100644
 --- a/net/minecraft/world/entity/Entity.java

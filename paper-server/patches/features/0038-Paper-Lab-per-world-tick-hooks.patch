@@ -130,7 +130,7 @@ index e8d6a67143f3f0b4813e51bb273498bc404899b9..7735244202c49daba3ff2cae0962c3b2
          if (success) {
              source.sendSuccess(() -> Component.translatable("commands.tick.sprint.stop.success"), true);
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index a5e88a2d865ce637f79e513ec517514fd29e5588..3e806e23bbaa2907643b325a0c5b2ad3aa3d3335 100644
+index 8cd61741bd4fe6079b1e9302c46356707f17359b..1e0d5f9d8d0f9e5e129a3fef7f7b0b40ebda8078 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -234,6 +234,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
@@ -149,7 +149,7 @@ index a5e88a2d865ce637f79e513ec517514fd29e5588..3e806e23bbaa2907643b325a0c5b2ad3
          ChunkGenerator generator = levelStem.generator();
          // CraftBukkit start
          // Paper start - per-world time
-@@ -2299,10 +2301,17 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+@@ -2320,10 +2322,17 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
      }
  
      @Override
