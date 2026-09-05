@@ -4660,6 +4660,16 @@ public interface World extends RegionAccessor, WorldInfo, PluginMessageRecipient
     @NotNull
     public Collection<GeneratedStructure> getStructures(int x, int z, @NotNull Structure structure);
 
+    // Paper start - per-world tick manager
+    /**
+     * Gets the {@link ServerTickManager} for this world.
+     *
+     * @return the tick manager for this world
+     */
+    @NotNull
+    public ServerTickManager getTickManager();
+    // Paper end - per-world tick manager
+
     /**
      * Represents various map environment types that a world may be
      */

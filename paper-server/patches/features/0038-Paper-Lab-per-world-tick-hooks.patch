@@ -1,0 +1,344 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sat, 5 Sep 2026 11:13:33 +0600
+Subject: [PATCH] Paper Lab per-world tick hooks
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index da424f6c39570696535a901a3ca14a9831794771..df3c77d66dcabe290c8bf98b51dee8f1897534b4 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1133,9 +1133,22 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+     // Paper start - improve tick loop
+     private void initTickSchedule() {
+-        final long interval;
++        long interval;
+         if (this.isPaused() || !this.tickRateManager.isSprinting()) {
+             interval = this.tickRateManager.nanosecondsPerTick();
++            // Paper start - per-world tick
++            if (io.papermc.paper.lab.tick.LabPerWorldTick.isEnabled()) {
++                for (ServerLevel level : this.getAllLevels()) {
++                    if (level != null && level.perWorldTickRateManager() != null) {
++                        if (level.perWorldTickRateManager().isSprinting()) {
++                            interval = 0L;
++                            break;
++                        }
++                        interval = Math.min(interval, level.perWorldTickRateManager().nanosecondsPerTick());
++                    }
++                }
++            }
++            // Paper end - per-world tick
+         } else {
+             interval = 0L;
+         }
+@@ -1789,7 +1802,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+                 this.clockManager.tick();
+             } else {
+                 for (ServerLevel level : this.getAllLevels()) {
+-                    level.clockManager().tick();
++                    if (level.tickRateManager().runsNormally()) { // Paper - per-world tick manager
++                        level.clockManager().tick();
++                    }
+                 }
+             }
+             // Paper end - per-world time
+@@ -1817,6 +1832,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
+             level.updateLagCompensationTick(); // Paper - lag compensation
+             net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = level.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
++            if (io.papermc.paper.lab.tick.LabPerWorldTick.isEnabled()) {
++                level.perWorldTickRateManager().tick(); // Paper - advance per-world tick rate manager
++            }
+             profiler.push(() -> level + " " + level.dimension().identifier());
+             profiler.push("tick");
+ 
+diff --git a/net/minecraft/server/commands/TickCommand.java b/net/minecraft/server/commands/TickCommand.java
+index e8d6a67143f3f0b4813e51bb273498bc404899b9..7735244202c49daba3ff2cae0962c3b2c8a20c51 100644
+--- a/net/minecraft/server/commands/TickCommand.java
++++ b/net/minecraft/server/commands/TickCommand.java
+@@ -55,12 +55,16 @@ public class TickCommand {
+         );
+     }
+ 
++    private static ServerTickRateManager getManager(final CommandSourceStack source) {
++        return io.papermc.paper.lab.tick.LabPerWorldTick.getManager(source);
++    }
++
+     private static String nanosToMilisString(final long nanos) {
+         return String.format(Locale.ROOT, "%.1f", (float)nanos / (float)TimeUtil.NANOSECONDS_PER_MILLISECOND);
+     }
+ 
+     private static int setTickingRate(final CommandSourceStack source, final float rate) {
+-        ServerTickRateManager manager = source.getServer().tickRateManager();
++        ServerTickRateManager manager = getManager(source);
+         manager.setTickRate(rate);
+         String tickRateString = String.format(Locale.ROOT, "%.1f", rate);
+         source.sendSuccess(() -> Component.translatable("commands.tick.rate.success", tickRateString), true);
+@@ -68,7 +72,7 @@ public class TickCommand {
+     }
+ 
+     private static int tickQuery(final CommandSourceStack source) {
+-        ServerTickRateManager manager = source.getServer().tickRateManager();
++        ServerTickRateManager manager = getManager(source);
+         String busyTime = nanosToMilisString(source.getServer().getAverageTickTimeNanos());
+         float tickRate = manager.tickrate();
+         String tickRateString = String.format(Locale.ROOT, "%.1f", tickRate);
+@@ -98,7 +102,7 @@ public class TickCommand {
+     }
+ 
+     private static int sprint(final CommandSourceStack source, final int time) {
+-        boolean interrupted = source.getServer().tickRateManager().requestGameToSprint(time);
++        boolean interrupted = getManager(source).requestGameToSprint(time);
+         if (interrupted) {
+             source.sendSuccess(() -> Component.translatable("commands.tick.sprint.stop.success"), true);
+         }
+@@ -108,7 +112,7 @@ public class TickCommand {
+     }
+ 
+     private static int setFreeze(final CommandSourceStack source, final boolean freeze) {
+-        ServerTickRateManager manager = source.getServer().tickRateManager();
++        ServerTickRateManager manager = getManager(source);
+         if (freeze) {
+             if (manager.isSprinting()) {
+                 manager.stopSprinting();
+@@ -130,7 +134,7 @@ public class TickCommand {
+     }
+ 
+     private static int step(final CommandSourceStack source, final int advance) {
+-        ServerTickRateManager manager = source.getServer().tickRateManager();
++        ServerTickRateManager manager = getManager(source);
+         boolean success = manager.stepGameIfPaused(advance);
+         if (success) {
+             source.sendSuccess(() -> Component.translatable("commands.tick.step.success", advance), true);
+@@ -142,7 +146,7 @@ public class TickCommand {
+     }
+ 
+     private static int stopStepping(final CommandSourceStack source) {
+-        ServerTickRateManager manager = source.getServer().tickRateManager();
++        ServerTickRateManager manager = getManager(source);
+         boolean success = manager.stopStepping();
+         if (success) {
+             source.sendSuccess(() -> Component.translatable("commands.tick.step.stop.success"), true);
+@@ -154,7 +158,7 @@ public class TickCommand {
+     }
+ 
+     private static int stopSprinting(final CommandSourceStack source) {
+-        ServerTickRateManager manager = source.getServer().tickRateManager();
++        ServerTickRateManager manager = getManager(source);
+         boolean success = manager.stopSprinting();
+         if (success) {
+             source.sendSuccess(() -> Component.translatable("commands.tick.sprint.stop.success"), true);
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index a5e88a2d865ce637f79e513ec517514fd29e5588..3e806e23bbaa2907643b325a0c5b2ad3aa3d3335 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -234,6 +234,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private @Nullable ServerClockManager clockManager;
+     public boolean hasPhysicsEvent = true; // Paper - BlockPhysicsEvent
+     public boolean hasEntityMoveEvent; // Paper - Add EntityMoveEvent
++    private final ServerLevelTickRateManager perWorldTickRateManager; // Paper - per-world tick manager
+     private static final org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry DATA_TYPE_REGISTRY = new org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry();
+     public final org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer persistentDataContainer = new org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer(DATA_TYPE_REGISTRY);
+     private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
+@@ -648,6 +649,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         this.server = server;
+         this.customSpawners = customSpawners;
+         this.serverLevelData = levelData;
++        this.perWorldTickRateManager = new ServerLevelTickRateManager(this, server); // Paper - per-world tick manager
+         ChunkGenerator generator = levelStem.generator();
+         // CraftBukkit start
+         // Paper start - per-world time
+@@ -2299,10 +2301,17 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     }
+ 
+     @Override
+-    public TickRateManager tickRateManager() {
++    public net.minecraft.server.ServerTickRateManager tickRateManager() {
++        if (io.papermc.paper.lab.tick.LabPerWorldTick.isEnabled()) {
++            return this.perWorldTickRateManager;
++        }
+         return this.server.tickRateManager();
+     }
+ 
++    public ServerLevelTickRateManager perWorldTickRateManager() {
++        return this.perWorldTickRateManager;
++    }
++
+     @Override
+     public boolean noSave() {
+         return this.noSave;
+diff --git a/net/minecraft/server/level/ServerLevelTickRateManager.java b/net/minecraft/server/level/ServerLevelTickRateManager.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e280f0dad6044cb504613d62bc442c1e114237e0
+--- /dev/null
++++ b/net/minecraft/server/level/ServerLevelTickRateManager.java
+@@ -0,0 +1,155 @@
++package net.minecraft.server.level;
++
++import java.util.Locale;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
++import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
++import net.minecraft.server.MinecraftServer;
++import net.minecraft.server.ServerTickRateManager;
++import net.minecraft.util.TimeUtil;
++
++public class ServerLevelTickRateManager extends ServerTickRateManager {
++    private final ServerLevel level;
++    private long remainingSprintTicks = 0L;
++    private long sprintTickStartTime = 0L;
++    private long sprintTimeSpend = 0L;
++    private long scheduledCurrentSprintTicks = 0L;
++    private boolean previousIsFrozen = false;
++    private boolean silent;
++    public long accumulatedTimeNanos = 0L;
++
++    public ServerLevelTickRateManager(final ServerLevel level, final MinecraftServer server) {
++        super(server);
++        this.level = level;
++    }
++
++    public ServerLevel getLevel() {
++        return this.level;
++    }
++
++    @Override
++    public boolean isSprinting() {
++        return this.scheduledCurrentSprintTicks > 0L;
++    }
++
++    @Override
++    public void setFrozen(final boolean frozen) {
++        super.setFrozen(frozen);
++        this.updateStateToClients();
++    }
++
++    private void updateStateToClients() {
++        ClientboundTickingStatePacket packet = ClientboundTickingStatePacket.from(this);
++        for (ServerPlayer player : this.level.players()) {
++            player.connection.send(packet);
++        }
++    }
++
++    private void updateStepTicks() {
++        ClientboundTickingStepPacket packet = ClientboundTickingStepPacket.from(this);
++        for (ServerPlayer player : this.level.players()) {
++            player.connection.send(packet);
++        }
++    }
++
++    @Override
++    public boolean stepGameIfPaused(final int ticks) {
++        if (!this.isFrozen()) {
++            return false;
++        }
++
++        this.frozenTicksToRun = ticks;
++        this.updateStepTicks();
++        return true;
++    }
++
++    @Override
++    public boolean stopStepping() {
++        if (this.frozenTicksToRun > 0) {
++            this.frozenTicksToRun = 0;
++            this.updateStepTicks();
++            return true;
++        } else {
++            return false;
++        }
++    }
++
++    @Override
++    public boolean stopSprinting() {
++        if (this.remainingSprintTicks > 0L) {
++            this.finishTickSprint();
++            return true;
++        } else {
++            return false;
++        }
++    }
++
++    @Override
++    public boolean requestGameToSprint(final int time) {
++        return this.requestGameToSprint(time, false);
++    }
++
++    @Override
++    public boolean requestGameToSprint(final int time, final boolean silent) {
++        if (!this.isSprinting()) this.silent = silent;
++        boolean interrupted = this.remainingSprintTicks > 0L;
++        this.sprintTimeSpend = 0L;
++        this.scheduledCurrentSprintTicks = time;
++        this.remainingSprintTicks = time;
++        this.previousIsFrozen = this.isFrozen();
++        this.setFrozen(false);
++        return interrupted;
++    }
++
++    private void finishTickSprint() {
++        long completedTicks = this.scheduledCurrentSprintTicks - this.remainingSprintTicks;
++        double millisecondsToComplete = Math.max(1.0, this.sprintTimeSpend) / TimeUtil.NANOSECONDS_PER_MILLISECOND;
++        int ticksPerSecond = (int)(TimeUtil.MILLISECONDS_PER_SECOND * completedTicks / millisecondsToComplete);
++        String millisecondsPerTick = String.format(
++            Locale.ROOT, "%.2f", completedTicks == 0L ? this.millisecondsPerTick() : millisecondsToComplete / completedTicks
++        );
++        this.scheduledCurrentSprintTicks = 0L;
++        this.sprintTimeSpend = 0L;
++        if (!this.silent) {
++            this.level.getServer()
++                .createCommandSourceStack()
++                .sendSuccess(() -> Component.translatable("commands.tick.sprint.report", ticksPerSecond, millisecondsPerTick), true);
++        }
++        this.silent = false;
++        this.remainingSprintTicks = 0L;
++        this.setFrozen(this.previousIsFrozen);
++        this.level.getServer().onTickRateChanged();
++    }
++
++    @Override
++    public boolean checkShouldSprintThisTick() {
++        if (!this.runGameElements) {
++            return false;
++        } else if (this.remainingSprintTicks > 0L) {
++            this.sprintTickStartTime = System.nanoTime();
++            this.remainingSprintTicks--;
++            return true;
++        } else {
++            this.finishTickSprint();
++            return false;
++        }
++    }
++
++    @Override
++    public void endTickWork() {
++        this.sprintTimeSpend = this.sprintTimeSpend + (System.nanoTime() - this.sprintTickStartTime);
++    }
++
++    @Override
++    public void setTickRate(final float rate) {
++        super.setTickRate(rate);
++        this.level.getServer().onTickRateChanged();
++        this.updateStateToClients();
++    }
++
++    @Override
++    public void updateJoiningPlayer(final ServerPlayer player) {
++        player.connection.send(ClientboundTickingStatePacket.from(this));
++        player.connection.send(ClientboundTickingStepPacket.from(this));
++    }
++}
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index 50c9459cef959e9a34966d73bde51af3946742ac..30c796cd4bc6ab3a2289406a356d6208ee12f4ef 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -1012,7 +1012,7 @@ public abstract class PlayerList {
+         }
+ 
+         player.connection.send(new ClientboundGameEventPacket(ClientboundGameEventPacket.LEVEL_CHUNKS_LOAD_START, 0.0F));
+-        this.server.tickRateManager().updateJoiningPlayer(player);
++        level.tickRateManager().updateJoiningPlayer(player); // Paper - per-world tick manager
+     }
+ 
+     public void sendAllPlayerInfo(final ServerPlayer player) {

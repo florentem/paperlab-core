@@ -316,6 +316,13 @@ public class CraftWorld extends CraftRegionAccessor implements World {
         // Paper end - per world void damage height
     }
 
+    // Paper start - per-world tick manager
+    @Override
+    public org.bukkit.ServerTickManager getTickManager() {
+        return new CraftServerTickManager(this.world.tickRateManager());
+    }
+    // Paper end - per-world tick manager
+
     @Override
     public Block getBlockAt(int x, int y, int z) {
         return CraftBlock.at(this.world, new BlockPos(x, y, z));
