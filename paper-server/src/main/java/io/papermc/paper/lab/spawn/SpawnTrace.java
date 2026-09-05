@@ -89,7 +89,7 @@ public final class SpawnTrace {
         if (!enabled) {
             return;
         }
-        DATA.computeIfAbsent(level.dimension().identifier().getPath(), key -> new EnumMap<>(MobCategory.class))
+        DATA.computeIfAbsent(level.dimension().identifier().toString(), key -> new java.util.concurrent.ConcurrentHashMap<>())
             .computeIfAbsent(category, key -> new AtomicLongArray(OUTCOMES))
             .incrementAndGet(outcome.ordinal());
     }
@@ -106,7 +106,7 @@ public final class SpawnTrace {
      * @return массив длиной {@link Outcome#values()}, либо {@code null}, если данных нет
      */
     public static long[] snapshot(final ServerLevel level, final MobCategory category) {
-        final Map<MobCategory, AtomicLongArray> byCategory = DATA.get(level.dimension().identifier().getPath());
+        final Map<MobCategory, AtomicLongArray> byCategory = DATA.get(level.dimension().identifier().toString());
         if (byCategory == null) {
             return null;
         }

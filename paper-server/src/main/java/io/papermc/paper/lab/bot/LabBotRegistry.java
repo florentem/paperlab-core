@@ -319,7 +319,9 @@ public final class LabBotRegistry {
         // и NearbyPlayers пересчитались обычным путём.
         bot.teleportTo(level, pos.x, pos.y, pos.z, java.util.Set.of(), yaw, pitch, true);
         bot.setYHeadRot(yaw);
-        bot.setHealth(bot.getMaxHealth());
+        if (bot.getHealth() <= 0.0F) {
+            bot.setHealth(bot.getMaxHealth());
+        }
         bot.gameMode.changeGameModeForPlayer(gameMode);
         bot.getAbilities().flying = flying;
         bot.onUpdateAbilities();

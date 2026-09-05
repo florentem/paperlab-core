@@ -133,11 +133,75 @@ public final class LabPlayerCommand {
                             Commands.literal("spawn")
                                 .executes(ctx -> spawn(ctx, null, null, null, null))
                                 .then(
+                                    Commands.argument("gamemode", GameModeArgument.gameMode())
+                                        .executes(ctx -> spawn(ctx, null, null, null,
+                                            GameModeArgument.getGameMode(ctx, "gamemode")))
+                                )
+                                .then(
+                                    Commands.literal("in")
+                                        .then(
+                                            Commands.argument("dimension", DimensionArgument.dimension())
+                                                .executes(ctx -> spawn(ctx, null, null,
+                                                    DimensionArgument.getDimension(ctx, "dimension"), null))
+                                                .then(
+                                                    Commands.literal("at")
+                                                        .then(
+                                                            Commands.argument("position", Vec3Argument.vec3())
+                                                                .executes(ctx -> spawn(ctx,
+                                                                    Vec3Argument.getVec3(ctx, "position"), null,
+                                                                    DimensionArgument.getDimension(ctx, "dimension"), null))
+                                                        )
+                                                )
+                                        )
+                                )
+                                .then(
                                     Commands.literal("at")
                                         .then(
                                             Commands.argument("position", Vec3Argument.vec3())
                                                 .executes(ctx -> spawn(ctx,
                                                     Vec3Argument.getVec3(ctx, "position"), null, null, null))
+                                                .then(
+                                                    Commands.argument("gamemode", GameModeArgument.gameMode())
+                                                        .executes(ctx -> spawn(ctx,
+                                                            Vec3Argument.getVec3(ctx, "position"), null, null,
+                                                            GameModeArgument.getGameMode(ctx, "gamemode")))
+                                                )
+                                                .then(
+                                                    Commands.literal("in")
+                                                        .then(
+                                                            Commands.argument("dimension", DimensionArgument.dimension())
+                                                                .executes(ctx -> spawn(ctx,
+                                                                    Vec3Argument.getVec3(ctx, "position"), null,
+                                                                    DimensionArgument.getDimension(ctx, "dimension"), null))
+                                                                .then(
+                                                                    Commands.argument("gamemode", GameModeArgument.gameMode())
+                                                                        .executes(ctx -> spawn(ctx,
+                                                                            Vec3Argument.getVec3(ctx, "position"), null,
+                                                                            DimensionArgument.getDimension(ctx, "dimension"),
+                                                                            GameModeArgument.getGameMode(ctx, "gamemode")))
+                                                                )
+                                                                .then(
+                                                                    Commands.literal("facing").then(
+                                                                        Commands.argument("direction", RotationArgument.rotation())
+                                                                            .executes(ctx -> spawn(ctx,
+                                                                                Vec3Argument.getVec3(ctx, "position"),
+                                                                                RotationArgument.getRotation(ctx, "direction")
+                                                                                    .getRotation(ctx.getSource()),
+                                                                                DimensionArgument.getDimension(ctx, "dimension"),
+                                                                                null))
+                                                                            .then(
+                                                                                Commands.argument("gamemode", GameModeArgument.gameMode())
+                                                                                    .executes(ctx -> spawn(ctx,
+                                                                                        Vec3Argument.getVec3(ctx, "position"),
+                                                                                        RotationArgument.getRotation(ctx, "direction")
+                                                                                            .getRotation(ctx.getSource()),
+                                                                                        DimensionArgument.getDimension(ctx, "dimension"),
+                                                                                        GameModeArgument.getGameMode(ctx, "gamemode")))
+                                                                            )
+                                                                    )
+                                                                )
+                                                        )
+                                                )
                                                 .then(
                                                     Commands.literal("facing").then(
                                                         Commands.argument("direction", RotationArgument.rotation())
@@ -147,6 +211,15 @@ public final class LabPlayerCommand {
                                                                     .getRotation(ctx.getSource()),
                                                                 null, null))
                                                             .then(
+                                                                Commands.argument("gamemode", GameModeArgument.gameMode())
+                                                                    .executes(ctx -> spawn(ctx,
+                                                                        Vec3Argument.getVec3(ctx, "position"),
+                                                                        RotationArgument.getRotation(ctx, "direction")
+                                                                            .getRotation(ctx.getSource()),
+                                                                        null,
+                                                                        GameModeArgument.getGameMode(ctx, "gamemode")))
+                                                            )
+                                                            .then(
                                                                 Commands.literal("in").then(
                                                                     Commands.argument("dimension", DimensionArgument.dimension())
                                                                         .executes(ctx -> spawn(ctx,
@@ -155,16 +228,20 @@ public final class LabPlayerCommand {
                                                                                 .getRotation(ctx.getSource()),
                                                                             DimensionArgument.getDimension(ctx, "dimension"),
                                                                             null))
+                                                                        .then(
+                                                                            Commands.argument("gamemode", GameModeArgument.gameMode())
+                                                                                .executes(ctx -> spawn(ctx,
+                                                                                    Vec3Argument.getVec3(ctx, "position"),
+                                                                                    RotationArgument.getRotation(ctx, "direction")
+                                                                                        .getRotation(ctx.getSource()),
+                                                                                    DimensionArgument.getDimension(ctx, "dimension"),
+                                                                                    GameModeArgument.getGameMode(ctx, "gamemode")))
+                                                                        )
                                                                 )
                                                             )
                                                     )
                                                 )
                                         )
-                                )
-                                .then(
-                                    Commands.argument("gamemode", GameModeArgument.gameMode())
-                                        .executes(ctx -> spawn(ctx, null, null, null,
-                                            GameModeArgument.getGameMode(ctx, "gamemode")))
                                 )
                         )
                 )
@@ -181,8 +258,10 @@ public final class LabPlayerCommand {
 
         // Наследование от вызывающего — как в Carpet: позиция, поворот, измерение,
         // режим игры и полёт берутся у отправителя, если не заданы явно.
-        final Vec3 pos = posArg != null ? posArg : source.getPosition();
-        final Vec2 rot = rotArg != null ? rotArg : source.getRotation();
+        final Vec3 pos = posArg != null ? posArg
+            : (source.getEntity() != null ? source.getPosition() : Vec3.atCenterOf(source.getLevel().getRespawnData().globalPos().pos()));
+        final Vec2 rot = rotArg != null ? rotArg
+            : (source.getEntity() != null ? source.getRotation() : Vec2.ZERO);
         final ServerLevel level = levelArg != null ? levelArg : source.getLevel();
 
         GameType mode = GameType.CREATIVE;

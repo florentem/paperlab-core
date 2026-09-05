@@ -58,7 +58,7 @@ import net.minecraft.world.entity.Entity;
  */
 public final class LabGhost {
 
-    private static final Set<UUID> GHOSTS = new HashSet<>();
+    private static final Set<UUID> GHOSTS = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private LabGhost() {
     }

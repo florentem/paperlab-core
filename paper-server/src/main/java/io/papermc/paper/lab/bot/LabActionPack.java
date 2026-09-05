@@ -247,7 +247,7 @@ public final class LabActionPack {
         if (this.currentBlock == null) {
             return;
         }
-        this.bot.level().destroyBlockProgress(-1, this.currentBlock, -1);
+        this.bot.level().destroyBlockProgress(this.bot.getId(), this.currentBlock, -1);
         this.bot.gameMode.handleBlockBreakAction(this.currentBlock,
             ServerboundPlayerActionPacket.Action.ABORT_DESTROY_BLOCK,
             Direction.DOWN, this.bot.level().getMaxY(), -1);
@@ -353,7 +353,7 @@ public final class LabActionPack {
                 this.blockDamage = 0.0F;
                 broken = true;
             }
-            level.destroyBlockProgress(-1, pos, (int) (this.blockDamage * 10.0F));
+            level.destroyBlockProgress(this.bot.getId(), pos, (int) (this.blockDamage * 10.0F));
         }
         this.bot.resetLastActionTime();
         this.bot.swing(InteractionHand.MAIN_HAND);
