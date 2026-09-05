@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sat, 5 Sep 2026 09:50:59 +0600
+Subject: [PATCH] Capture and Playback hooks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Минимальные хуки для интеграции с модом Capture & Playback.
+
+Вся логика стримов, буферов и состояний вынесена в io.papermc.paper.lab.cplay.CPlayManager.
+В коде ваниллы остаются только необходимые точки перехвата:
+1. ServerLevel.tick (HEAD / RETURN): продвижение стримов воспроизведения и сброс захваченных событий;
+2. ServerLevel.runBlockEvents: синхронизация микротиков и обработка событий воспроизведения перед тиками блоков, захват событий поршней;
+3. SignalGetter.getControlInputSignal / getSignal: переопределение уровня редстоун-сигнала (15) для воспроизведения.
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 59598bfb95c2f8a38efd92685c46a954dc76739d..1d6e4ee75875264210c9fbd80e45f000e535afbe 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -796,6 +796,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     }
+ 
+     public void tick(final BooleanSupplier haveTime) {
++        io.papermc.paper.lab.cplay.CPlayManager.onLevelTickHead(this); // Paper Lab - Capture and Playback
+         ProfilerFiller profiler = Profiler.get();
+         this.handlingTick = true;
+         this.environmentAttributes().invalidateTickCache();
+@@ -929,6 +930,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+         this.debugSynchronizers.tick(this.server.debugSubscribers());
+         profiler.pop();
++        io.papermc.paper.lab.cplay.CPlayManager.onLevelTickReturn(this); // Paper Lab - Capture and Playback
+     }
+ 
+     @Override
+@@ -2043,11 +2045,14 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+     private void runBlockEvents() {
+         this.blockEventsToReschedule.clear();
++        io.papermc.paper.lab.cplay.CPlayManager.onRunBlockEventsHead(this); // Paper Lab - Capture and Playback
+ 
+-        while (!this.blockEvents.isEmpty()) {
++        while (io.papermc.paper.lab.cplay.CPlayManager.onRunBlockEventsLoop(this, this.blockEvents.size())) { // Paper Lab - Capture and Playback
+             BlockEventData eventData = this.blockEvents.removeFirst();
++            io.papermc.paper.lab.cplay.CPlayManager.onBlockEventProcessed(this); // Paper Lab - Capture and Playback
+             if (this.shouldTickBlocksAt(eventData.pos())) {
+                 if (this.doBlockEvent(eventData)) {
++                    io.papermc.paper.lab.cplay.CPlayManager.onBlockEventSuccess(this, eventData); // Paper Lab - Capture and Playback
+                     this.server
+                         .getPlayerList()
+                         .broadcast(
+@@ -2066,6 +2071,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         }
+ 
+         this.blockEvents.addAll(this.blockEventsToReschedule);
++        io.papermc.paper.lab.cplay.CPlayManager.onRunBlockEventsReturn(this); // Paper Lab - Capture and Playback
+     }
+ 
+     private boolean doBlockEvent(final BlockEventData eventData) {
+diff --git a/net/minecraft/world/level/SignalGetter.java b/net/minecraft/world/level/SignalGetter.java
+index b2ff063a5bfc7e73557f17896a1eadee0d39b735..1d5ec746be04cac9cdb143ff0277e46e9a86a264 100644
+--- a/net/minecraft/world/level/SignalGetter.java
++++ b/net/minecraft/world/level/SignalGetter.java
+@@ -47,6 +47,7 @@ public interface SignalGetter extends BlockGetter {
+     }
+ 
+     default int getControlInputSignal(final BlockPos pos, final Direction direction, final boolean onlyDiodes) {
++        if (io.papermc.paper.lab.cplay.CPlayManager.isSignalOverridden(this, pos, direction)) { return 15; } // Paper Lab - Capture and Playback
+         BlockState blockState = this.getBlockState(pos);
+         if (onlyDiodes) {
+             return DiodeBlock.isDiode(blockState) ? this.getDirectSignal(pos, direction) : Redstone.SIGNAL_MIN;
+@@ -64,6 +65,7 @@ public interface SignalGetter extends BlockGetter {
+     }
+ 
+     default int getSignal(final BlockPos pos, final Direction direction) {
++        if (io.papermc.paper.lab.cplay.CPlayManager.isSignalOverridden(this, pos, direction)) { return 15; } // Paper Lab - Capture and Playback
+         BlockState state = this.getBlockState(pos);
+         int signal = state.getSignal(this, pos, direction);
+         return state.isRedstoneConductor(this, pos) ? Math.max(signal, this.getDirectSignalTo(pos)) : signal;
