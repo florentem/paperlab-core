@@ -90,6 +90,9 @@ public final class LabBotRegistry {
      * его таймеры еды и подъёма.
      */
     public static void tickConnectionPhase() {
+        if (!io.papermc.paper.lab.rules.LabRuleState.playerCommandEnabled && BOTS.isEmpty() && PENDING.isEmpty()) {
+            return;
+        }
         tickPending();
         if (BOTS.isEmpty()) {
             return;

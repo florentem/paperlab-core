@@ -46,6 +46,9 @@ public final class CPlayManager {
     }
 
     public static void onLevelTickHead(final ServerLevel level) {
+        if (STATES.isEmpty()) {
+            return;
+        }
         final LevelState state = getState(level);
         if (state == null || !state.isActive()) {
             return;
@@ -79,6 +82,9 @@ public final class CPlayManager {
     }
 
     public static void onRunBlockEventsHead(final ServerLevel level) {
+        if (STATES.isEmpty()) {
+            return;
+        }
         final LevelState state = getState(level);
         if (state == null || !state.isActive()) {
             return;
@@ -89,6 +95,9 @@ public final class CPlayManager {
     }
 
     public static boolean onRunBlockEventsLoop(final ServerLevel level, final int remainingQueueSize) {
+        if (STATES.isEmpty()) {
+            return remainingQueueSize > 0;
+        }
         final LevelState state = getState(level);
         if (state == null || !state.isActive()) {
             return remainingQueueSize > 0;
@@ -109,6 +118,9 @@ public final class CPlayManager {
     }
 
     public static void onBlockEventProcessed(final ServerLevel level) {
+        if (STATES.isEmpty()) {
+            return;
+        }
         final LevelState state = getState(level);
         if (state != null && state.isActive()) {
             state.blockEventCount--;
@@ -116,6 +128,9 @@ public final class CPlayManager {
     }
 
     public static void onBlockEventSuccess(final ServerLevel level, final BlockEventData data) {
+        if (STATES.isEmpty()) {
+            return;
+        }
         final LevelState state = getState(level);
         if (state == null || state.captureStreams.isEmpty()) {
             return;
@@ -138,6 +153,9 @@ public final class CPlayManager {
     }
 
     public static void onRunBlockEventsReturn(final ServerLevel level) {
+        if (STATES.isEmpty()) {
+            return;
+        }
         final LevelState state = getState(level);
         if (state != null && state.isActive()) {
             state.microtick = -1;
@@ -145,6 +163,9 @@ public final class CPlayManager {
     }
 
     public static void onLevelTickReturn(final ServerLevel level) {
+        if (STATES.isEmpty()) {
+            return;
+        }
         final LevelState state = getState(level);
         if (state == null || state.captureStreams.isEmpty()) {
             return;
@@ -162,6 +183,9 @@ public final class CPlayManager {
     }
 
     public static boolean isSignalOverridden(final SignalGetter getter, final BlockPos pos, final Direction direction) {
+        if (STATES.isEmpty()) {
+            return false;
+        }
         if (getter instanceof ServerLevel level) {
             final LevelState state = STATES.get(level.dimension());
             if (state != null && !state.poweredStates.isEmpty()) {

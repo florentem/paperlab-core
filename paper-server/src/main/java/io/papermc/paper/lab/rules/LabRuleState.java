@@ -37,7 +37,15 @@ public final class LabRuleState {
      * <p>Имя как в Carpet. Выключение не убирает узлы из дерева — Brigadier строит его
      * один раз при запуске, — а делает их недоступными через {@code requires}.
      */
-    public static volatile boolean tickCommandCarpetfied = true;
+    public static volatile boolean tickCommandCarpetfied = false;
+
+    /**
+     * Доступна ли команда {@code /player} (боты).
+     *
+     * <p>По умолчанию выключена: без плагина ядро не должно менять набор доступных
+     * команд. Плагин ставит {@code true} при включении.
+     */
+    public static volatile boolean playerCommandEnabled = false;
 
     private LabRuleState() {
     }

@@ -57,7 +57,8 @@ public final class LabPlayerCommand {
             Commands.literal("player")
                 // Право bukkit, а не уровень оператора: так узел виден LuckPerms
                 // наравне с остальными командами инструментария (paperlab.player).
-                .requires(source -> source.getBukkitSender().hasPermission("paperlab.player"))
+                .requires(source -> io.papermc.paper.lab.rules.LabRuleState.playerCommandEnabled
+                    && source.getBukkitSender().hasPermission("paperlab.player"))
                 .then(Commands.literal("list").executes(ctx -> list(ctx.getSource())))
                 .then(
                     Commands.argument("name", StringArgumentType.word())
