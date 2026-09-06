@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 21:48:34 +0600
+Subject: [PATCH] fix(tick): redirect sprint/warp to focused zone and support
+ tick warp in frozen zones
+
+
+diff --git a/net/minecraft/server/commands/TickCommand.java b/net/minecraft/server/commands/TickCommand.java
+index 550688ead0d8cb244e544273ab590c6711a4fa56..c05fbac35a9f3fd7b4ecdbed7a264bfa5f296d5c 100644
+--- a/net/minecraft/server/commands/TickCommand.java
++++ b/net/minecraft/server/commands/TickCommand.java
+@@ -123,6 +123,9 @@ public class TickCommand {
+     }
+ 
+     private static int sprint(final CommandSourceStack source, final int time) {
++        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
++            return io.papermc.paper.lab.zone.LabTickZones.handleSprint(source, time);
++        }
+         if (!checkGlobalPermission(source)) {
+             return 0;
+         }
+@@ -200,6 +203,9 @@ public class TickCommand {
+     }
+ 
+     private static int stopSprinting(final CommandSourceStack source) {
++        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
++            return io.papermc.paper.lab.zone.LabTickZones.handleStopSprinting(source);
++        }
+         if (!checkGlobalPermission(source)) {
+             return 0;
+         }

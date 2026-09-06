@@ -14,6 +14,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.ServerTickRateManager;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -43,6 +44,9 @@ public final class LabTickZones {
 
     /** player UUID -> lowercase zoneName */
     private static final Map<UUID, String> PLAYER_FOCUS = new ConcurrentHashMap<>();
+
+    /** Active zone targeted by sprint/warp, or null if global sprint */
+    private static volatile String activeSprintZone = null;
 
     private LabTickZones() {
     }
@@ -394,8 +398,13 @@ public final class LabTickZones {
         final String worldKey = resolveWorldKey(level);
         final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
         if (worldZones != null && !worldZones.isEmpty()) {
+            final boolean serverSprinting = level.tickRateManager().isSprinting();
+            if (!serverSprinting) {
+                activeSprintZone = null;
+            }
             for (final LabTickZone zone : worldZones.values()) {
-                zone.onWorldTickStart();
+                final boolean zoneSprinting = serverSprinting && (activeSprintZone == null || activeSprintZone.equalsIgnoreCase(zone.name()));
+                zone.onWorldTickStart(zoneSprinting);
             }
         }
     }
@@ -493,6 +502,45 @@ public final class LabTickZones {
         source.sendSuccess(() -> Component.literal("[Zone " + zone.name() + "] Stepping stopped")
             .withStyle(ChatFormatting.DARK_GRAY), false);
         return 1;
+    }
+
+    public static int handleSprint(final CommandSourceStack source, final int time) {
+        final LabTickZone zone = getFocusedZone(source);
+        if (zone == null) {
+            source.sendFailure(Component.literal("Focused zone not found"));
+            return 0;
+        }
+        if (!checkZonePermission(source, zone)) {
+            return 0;
+        }
+        activeSprintZone = zone.name();
+        final ServerTickRateManager manager = io.papermc.paper.lab.tick.LabPerWorldTick.getManager(source);
+        manager.requestGameToSprint(time);
+        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "[Zone %s] sprint %dt", zone.name(), time))
+            .withStyle(ChatFormatting.AQUA), true);
+        return 1;
+    }
+
+    public static int handleStopSprinting(final CommandSourceStack source) {
+        final LabTickZone zone = getFocusedZone(source);
+        if (zone == null) {
+            source.sendFailure(Component.literal("Focused zone not found"));
+            return 0;
+        }
+        if (!checkZonePermission(source, zone)) {
+            return 0;
+        }
+        activeSprintZone = null;
+        final ServerTickRateManager manager = io.papermc.paper.lab.tick.LabPerWorldTick.getManager(source);
+        final boolean success = manager.stopSprinting();
+        if (success) {
+            source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "[Zone %s] sprint stopped", zone.name()))
+                .withStyle(ChatFormatting.YELLOW), true);
+            return 1;
+        } else {
+            source.sendFailure(Component.literal("Not sprinting/warping"));
+            return 0;
+        }
     }
 
     public static int handleQuery(final CommandSourceStack source) {

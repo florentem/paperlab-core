@@ -87,6 +87,9 @@ public final class LabTickCommand {
     }
 
     private static int warp(final CommandSourceStack source, final int ticks) {
+        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
+            return io.papermc.paper.lab.zone.LabTickZones.handleSprint(source, ticks);
+        }
         if (io.papermc.paper.lab.zone.LabTickZones.isEnabled() && source.isPlayer()
             && !source.getBukkitSender().hasPermission("paperlab.tick.global")) {
             source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));
@@ -100,6 +103,9 @@ public final class LabTickCommand {
     }
 
     private static int stopWarp(final CommandSourceStack source) {
+        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
+            return io.papermc.paper.lab.zone.LabTickZones.handleStopSprinting(source);
+        }
         if (io.papermc.paper.lab.zone.LabTickZones.isEnabled() && source.isPlayer()
             && !source.getBukkitSender().hasPermission("paperlab.tick.global")) {
             source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));

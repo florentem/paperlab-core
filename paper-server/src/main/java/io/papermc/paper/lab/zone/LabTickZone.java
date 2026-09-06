@@ -208,9 +208,15 @@ public final class LabTickZone {
     /**
      * Called at the beginning of ServerLevel.tick() to determine if this zone ticks this frame.
      */
-    public void onWorldTickStart() {
+    public void onWorldTickStart(final boolean isSprinting) {
         if (this.frozen) {
-            this.tickingThisFrame = (this.stepTicks > 0);
+            this.tickingThisFrame = (this.stepTicks > 0) || isSprinting;
+            this.extraTicksThisFrame = 0;
+            return;
+        }
+
+        if (isSprinting) {
+            this.tickingThisFrame = true;
             this.extraTicksThisFrame = 0;
             return;
         }
@@ -239,6 +245,8 @@ public final class LabTickZone {
         if (this.frozen) {
             if (this.stepTicks > 0) {
                 this.stepTicks--;
+                this.zoneGameTime++;
+            } else if (this.tickingThisFrame) {
                 this.zoneGameTime++;
             }
             return;
