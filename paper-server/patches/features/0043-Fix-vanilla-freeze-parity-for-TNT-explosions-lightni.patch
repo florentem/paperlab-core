@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 21:21:44 +0600
+Subject: [PATCH] Fix vanilla freeze parity for TNT, explosions, lightning and
+ spawners
+
+
+diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
+index 7feb41570d056dd7d4e619bd1b3fc23e8e38e37e..66fb6ce9f05bf3bdab950ca294b220d41e670757 100644
+--- a/net/minecraft/server/level/ServerEntity.java
++++ b/net/minecraft/server/level/ServerEntity.java
+@@ -272,6 +272,12 @@ public class ServerEntity {
+             this.entity.hurtMarked = false;
+             this.synchronizer.sendToTrackingPlayersAndSelf(new ClientboundSetEntityMotionPacket(this.entity));
+         }
++
++        // Paper Lab start - lock TNT fuse on client while entity is frozen
++        if (this.entity.isLabFrozen() && this.entity instanceof net.minecraft.world.entity.item.PrimedTnt primedTnt) {
++            this.synchronizer.sendToTrackingPlayers(new ClientboundSetEntityDataPacket(this.entity.getId(), java.util.List.of(SynchedEntityData.DataValue.create(net.minecraft.world.entity.item.PrimedTnt.DATA_FUSE_ID, primedTnt.getFuse()))));
++        }
++        // Paper Lab end - lock TNT fuse on client while entity is frozen
+     }
+ 
+     private void handleMinecartPosRot(final NewMinecartBehavior newMinecartBehavior, final byte yRotn, final byte xRotn, final boolean shouldSendRotation) {
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 6f8155ff5709cdd7b638fc0936d233afbcd2c909..a76ee66a9b3dae183eaa5b33ee8bd5bccc978add 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1065,7 +1065,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         profiler.push("thunder");
+         if (!this.paperConfig().environment.disableThunder && raining && this.isThundering() && this.spigotConfig.thunderChance > 0 && this.random.nextInt(this.spigotConfig.thunderChance) == 0) { // Spigot // Paper - Option to disable thunder
+             BlockPos pos = this.findLightningTargetAround(this.getBlockRandomPos(minX, 0, minZ, 15));
+-            if (this.isRainingAt(pos)) {
++            if (this.isRainingAt(pos) && !io.papermc.paper.lab.zone.LabTickZones.isBlockFrozen(this, pos)) {
+                 DifficultyInstance difficulty = this.getCurrentDifficultyAt(pos);
+                 boolean isTrap = this.getGameRules().get(GameRules.SPAWN_MOBS)
+                     && this.random.nextDouble() < difficulty.getEffectiveDifficulty() * this.paperConfig().entities.spawning.skeletonHorseThunderSpawnChance.or(0.01) // Paper - Configurable spawn chances for skeleton horses
+@@ -1694,7 +1694,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             if (spawnReason != null && !org.bukkit.craftbukkit.event.CraftEventFactory.doEntityAddEventCalling(this, entity, spawnReason)) {
+                 return false;
+             }
+-            // CraftBukkit end
++            // Paper Lab start - freeze newly added entities if spawning in frozen zone
++            if (this.tickRateManager().isEntityFrozen(entity) || io.papermc.paper.lab.zone.LabTickZones.isEntityFrozen(this, entity)) {
++                entity.setLabFrozen(true);
++            }
++            // Paper Lab end - freeze newly added entities if spawning in frozen zone
+ 
+             return this.moonrise$getEntityLookup().addNewEntity(entity); // Paper - rewrite chunk system
+         }
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 3f68c5cd2ede262821c7bbbeb9ab544893cd28fa..fd5cd79c16cde8fd2146eae9565f6f00bf6c6bf1 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -2081,6 +2081,9 @@ public abstract class Entity
+             if (this.level() instanceof net.minecraft.server.level.ServerLevel sl) {
+                 sl.getChunkSource().sendToTrackingPlayers(this, new net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket(this.getId(), net.minecraft.world.phys.Vec3.ZERO));
+                 sl.getChunkSource().sendToTrackingPlayers(this, net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket.of(this));
++                if (this instanceof net.minecraft.world.entity.item.PrimedTnt primedTnt) {
++                    sl.getChunkSource().sendToTrackingPlayers(this, new net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket(this.getId(), java.util.List.of(net.minecraft.network.syncher.SynchedEntityData.DataValue.create(net.minecraft.world.entity.item.PrimedTnt.DATA_FUSE_ID, primedTnt.getFuse()))));
++                }
+             }
+         } else {
+             this.setNoGravity(this.labSavedNoGravity);
+diff --git a/net/minecraft/world/entity/item/PrimedTnt.java b/net/minecraft/world/entity/item/PrimedTnt.java
+index 237d579c4fa760e6f6c8f8e747873b115d04d1bd..1a5cced7ef89774071764ddfbcd7bc8e34d7df9d 100644
+--- a/net/minecraft/world/entity/item/PrimedTnt.java
++++ b/net/minecraft/world/entity/item/PrimedTnt.java
+@@ -37,7 +37,7 @@ import org.bukkit.event.entity.ExplosionPrimeEvent;
+ // CraftBukkit end
+ 
+ public class PrimedTnt extends Entity implements TraceableEntity {
+-    private static final EntityDataAccessor<Integer> DATA_FUSE_ID = SynchedEntityData.defineId(PrimedTnt.class, EntityDataSerializers.INT);
++    public static final EntityDataAccessor<Integer> DATA_FUSE_ID = SynchedEntityData.defineId(PrimedTnt.class, EntityDataSerializers.INT);
+     private static final EntityDataAccessor<BlockState> DATA_BLOCK_STATE_ID = SynchedEntityData.defineId(PrimedTnt.class, EntityDataSerializers.BLOCK_STATE);
+     public static final short DEFAULT_FUSE_TIME = 80;
+     public static final int NO_FUSE = -1;
+diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
+index b40fe3ecfbf7f6d7b1bb402a60bb5b8e1f499576..ad67792163070cd82b7ee779a788a184bd8de0df 100644
+--- a/net/minecraft/world/level/NaturalSpawner.java
++++ b/net/minecraft/world/level/NaturalSpawner.java
+@@ -297,7 +297,7 @@ public final class NaturalSpawner {
+                     Player nearestPlayer = level.getNearestPlayer(xx, yStart, zz, -1.0, false);
+                     if (nearestPlayer != null) {
+                         double nearestPlayerDistanceSqr = nearestPlayer.distanceToSqr(xx, yStart, zz);
+-                        if (level.isLoadedAndInBounds(pos) && isRightDistanceToPlayerAndSpawnPoint(level, chunk, pos, nearestPlayerDistanceSqr)) { // Paper - don't load chunks for mob spawn
++                        if (level.isLoadedAndInBounds(pos) && !io.papermc.paper.lab.zone.LabTickZones.isBlockFrozen(level, pos) && isRightDistanceToPlayerAndSpawnPoint(level, chunk, pos, nearestPlayerDistanceSqr)) { // Paper - don't load chunks for mob spawn // Paper Lab - tick zone freeze
+                             if (currentSpawnData == null) {
+                                 Optional<MobSpawnSettings.SpawnerData> nextSpawnData = getRandomSpawnMobAt(
+                                     level, structureManager, generator, mobCategory, level.random, pos
+diff --git a/net/minecraft/world/level/ServerExplosion.java b/net/minecraft/world/level/ServerExplosion.java
+index 91bb2ac15b9e9350552f4eeb9573c2f564854ce4..0ea1ee76e00b654d142120484647b67c462acdf7 100644
+--- a/net/minecraft/world/level/ServerExplosion.java
++++ b/net/minecraft/world/level/ServerExplosion.java
+@@ -439,7 +439,7 @@ public class ServerExplosion implements Explosion {
+                 if (power > 0.0f && cachedBlock.shouldExplode == null) {
+                     // note: we expect shouldBlockExplode to be pure with respect to power, as Vanilla currently is.
+                     // basically, it is unused, which allows us to cache the result
+-                    final boolean shouldExplode = iblockdata.isDestroyable() && this.damageCalculator.shouldBlockExplode((Explosion)(Object)this, this.level, cachedBlock.immutablePos, cachedBlock.blockState, power); // Paper - Protect Bedrock and End Portal/Frames from being destroyed
++                    final boolean shouldExplode = iblockdata.isDestroyable() && this.damageCalculator.shouldBlockExplode((Explosion)(Object)this, this.level, cachedBlock.immutablePos, cachedBlock.blockState, power) && !io.papermc.paper.lab.zone.LabTickZones.isBlockFrozen(this.level, cachedBlock.immutablePos); // Paper - Protect Bedrock and End Portal/Frames from being destroyed // Paper Lab - tick zone freeze
+                     cachedBlock.shouldExplode = shouldExplode ? Boolean.TRUE : Boolean.FALSE;
+                     if (shouldExplode) {
+                         if (this.fire || !cachedBlock.blockState.isAir()) {
+@@ -481,6 +481,9 @@ public class ServerExplosion implements Explosion {
+             List<Entity> list = this.level.getEntities(this.excludeSourceFromDamage ? this.source : null, new AABB(x0, y0, z0, x1, y1, z1), entity -> entity.isAlive() && !entity.isSpectator()); // Paper - Fix lag from explosions processing dead entities, Allow explosions to damage source
+ 
+             for (Entity entity : list) { // Paper - used in loop
++                if (io.papermc.paper.lab.zone.LabTickZones.isEntityFrozen(this.level, entity)) {
++                    continue; // Paper Lab - entity in frozen zone
++                }
+                 if (!entity.ignoreExplosion(this)) {
+                     double dist = Math.sqrt(entity.distanceToSqr(this.center)) / doubleRadius;
+                     if (!(dist > 1.0)) {
+@@ -612,7 +615,7 @@ public class ServerExplosion implements Explosion {
+ 
+     private void createFire(final List<BlockPos> targetBlocks) {
+         for (BlockPos pos : targetBlocks) {
+-            if (this.level.random.nextInt(3) == 0 && this.level.getBlockState(pos).isAir() && this.level.getBlockState(pos.below()).isSolidRender()) {
++            if (this.level.random.nextInt(3) == 0 && this.level.getBlockState(pos).isAir() && this.level.getBlockState(pos.below()).isSolidRender() && !io.papermc.paper.lab.zone.LabTickZones.isBlockFrozen(this.level, pos)) {
+                 // CraftBukkit start - Ignition by explosion
+                 if (!org.bukkit.craftbukkit.event.CraftEventFactory.callBlockIgniteEvent(this.level, pos, this).isCancelled()) {
+                     this.level.setBlockAndUpdate(pos, BaseFireBlock.getState(this.level, pos));

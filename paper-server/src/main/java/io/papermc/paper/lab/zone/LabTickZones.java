@@ -311,6 +311,45 @@ public final class LabTickZones {
         return zone.shouldTickNow();
     }
 
+    public static boolean isBlockFrozen(final Level level, final BlockPos pos) {
+        if (!enabled || !hasActiveZones || level == null || pos == null) {
+            return false;
+        }
+        final LabTickZone zone = getZoneAt(level, pos);
+        if (zone == null) {
+            return false;
+        }
+        return !zone.shouldTickNow();
+    }
+
+    public static LabTickZone getZoneIntersecting(final Level level, final net.minecraft.world.phys.AABB aabb) {
+        if (!enabled || !hasActiveZones || level == null || aabb == null) {
+            return null;
+        }
+        final String worldKey = resolveWorldKey(level);
+        final Map<Long, List<LabTickZone>> index = CHUNK_INDEX.get(worldKey);
+        if (index == null || index.isEmpty()) {
+            return null;
+        }
+        final int minCx = ((int) Math.floor(aabb.minX)) >> 4;
+        final int maxCx = ((int) Math.floor(aabb.maxX)) >> 4;
+        final int minCz = ((int) Math.floor(aabb.minZ)) >> 4;
+        final int maxCz = ((int) Math.floor(aabb.maxZ)) >> 4;
+        for (int cx = minCx; cx <= maxCx; cx++) {
+            for (int cz = minCz; cz <= maxCz; cz++) {
+                final List<LabTickZone> zones = index.get(ChunkPos.pack(cx, cz));
+                if (zones != null) {
+                    for (final LabTickZone zone : zones) {
+                        if (zone.intersects(aabb)) {
+                            return zone;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     public static boolean isEntityFrozen(final Level level, final Entity entity) {
         if (!enabled || !hasActiveZones) {
             return false;
@@ -323,7 +362,10 @@ public final class LabTickZones {
                 return false; // Vehicles carrying players are never frozen
             }
         }
-        final LabTickZone zone = getZoneAt(level, entity.blockPosition());
+        LabTickZone zone = getZoneAt(level, entity.blockPosition());
+        if (zone == null) {
+            zone = getZoneIntersecting(level, entity.getBoundingBox());
+        }
         if (zone == null) {
             return false;
         }

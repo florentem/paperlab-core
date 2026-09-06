@@ -157,6 +157,19 @@ public final class LabTickZone {
         return contains(pos.getX(), pos.getY(), pos.getZ());
     }
 
+    public boolean intersects(final net.minecraft.world.phys.AABB aabb) {
+        final ZoneCuboid b = this.bounds;
+        if (b == null || !b.intersects(aabb)) {
+            return false;
+        }
+        for (final ZoneCuboid box : this.boxes) {
+            if (box.intersects(aabb)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean intersectsChunk(final int chunkX, final int chunkZ) {
         return this.chunks.contains(ChunkPos.pack(chunkX, chunkZ));
     }
@@ -205,11 +218,17 @@ public final class LabTickZone {
     }
 
     public synchronized void recordPendingBlock(final BlockPos pos, final Block type) {
-        this.pendingBlockTicks.add(new PendingBlock(pos.immutable(), type));
+        final PendingBlock entry = new PendingBlock(pos.immutable(), type);
+        if (!this.pendingBlockTicks.contains(entry)) {
+            this.pendingBlockTicks.add(entry);
+        }
     }
 
     public synchronized void recordPendingFluid(final BlockPos pos, final Fluid type) {
-        this.pendingFluidTicks.add(new PendingFluid(pos.immutable(), type));
+        final PendingFluid entry = new PendingFluid(pos.immutable(), type);
+        if (!this.pendingFluidTicks.contains(entry)) {
+            this.pendingFluidTicks.add(entry);
+        }
     }
 
     /**

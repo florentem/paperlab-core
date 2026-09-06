@@ -46,6 +46,12 @@ public record ZoneCuboid(int minX, int minY, int minZ, int maxX, int maxY, int m
             && maxZ >= cMinZ && minZ <= cMaxZ;
     }
 
+    public boolean intersects(final net.minecraft.world.phys.AABB aabb) {
+        return aabb.minX < (maxX + 1.0) && aabb.maxX > minX
+            && aabb.minY < (maxY + 1.0) && aabb.maxY > minY
+            && aabb.minZ < (maxZ + 1.0) && aabb.maxZ > minZ;
+    }
+
     public long volume() {
         return (long) (maxX - minX + 1) * (long) (maxY - minY + 1) * (long) (maxZ - minZ + 1);
     }
