@@ -304,6 +304,7 @@ public final class LabTickZone {
             } finally {
                 level.setHandlingTick(false);
             }
+            level.spigotConfig.currentPrimedTnt = 0;
             level.runZoneEntities(this);
             level.runZoneBlockEntities(this);
         } finally {

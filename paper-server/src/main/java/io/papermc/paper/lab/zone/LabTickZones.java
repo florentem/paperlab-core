@@ -663,6 +663,32 @@ public final class LabTickZones {
         return 1;
     }
 
+    public static boolean stepZone(final String name, final int ticks) {
+        final LabTickZone zone = findZone(name);
+        if (zone != null && zone.isFrozen()) {
+            zone.step(ticks);
+            return true;
+        }
+        return false;
+    }
+
+    public static boolean sprintZone(final String name, final int time) {
+        final LabTickZone zone = findZone(name);
+        if (zone != null) {
+            activeSprintZone = zone.name();
+            final net.minecraft.server.MinecraftServer server = net.minecraft.server.MinecraftServer.getServer();
+            if (server != null) {
+                for (final ServerLevel sl : server.getAllLevels()) {
+                    if (resolveWorldKey(sl).equalsIgnoreCase(zone.worldKey())) {
+                        sl.tickRateManager().requestGameToSprint(time);
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     public static int handleSprint(final CommandSourceStack source, final int time) {
         final LabTickZone zone = getFocusedZone(source);
         if (zone == null) {
