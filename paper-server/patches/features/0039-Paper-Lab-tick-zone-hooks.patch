@@ -1,0 +1,165 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 19:51:47 +0600
+Subject: [PATCH] Paper Lab tick zone hooks
+
+
+diff --git a/net/minecraft/server/commands/TickCommand.java b/net/minecraft/server/commands/TickCommand.java
+index 7735244202c49daba3ff2cae0962c3b2c8a20c51..3a964df5c32e5faa25168d508e202ef259b75e84 100644
+--- a/net/minecraft/server/commands/TickCommand.java
++++ b/net/minecraft/server/commands/TickCommand.java
+@@ -63,7 +63,22 @@ public class TickCommand {
+         return String.format(Locale.ROOT, "%.1f", (float)nanos / (float)TimeUtil.NANOSECONDS_PER_MILLISECOND);
+     }
+ 
++    private static boolean checkGlobalPermission(final CommandSourceStack source) {
++        if (io.papermc.paper.lab.zone.LabTickZones.isEnabled() && source.isPlayer()
++            && !source.getBukkitSender().hasPermission("paperlab.tick.global")) {
++            source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));
++            return false;
++        }
++        return true;
++    }
++
+     private static int setTickingRate(final CommandSourceStack source, final float rate) {
++        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
++            return io.papermc.paper.lab.zone.LabTickZones.handleRate(source, rate);
++        }
++        if (!checkGlobalPermission(source)) {
++            return 0;
++        }
+         ServerTickRateManager manager = getManager(source);
+         manager.setTickRate(rate);
+         String tickRateString = String.format(Locale.ROOT, "%.1f", rate);
+@@ -72,6 +87,9 @@ public class TickCommand {
+     }
+ 
+     private static int tickQuery(final CommandSourceStack source) {
++        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
++            return io.papermc.paper.lab.zone.LabTickZones.handleQuery(source);
++        }
+         ServerTickRateManager manager = getManager(source);
+         String busyTime = nanosToMilisString(source.getServer().getAverageTickTimeNanos());
+         float tickRate = manager.tickrate();
+@@ -102,6 +120,9 @@ public class TickCommand {
+     }
+ 
+     private static int sprint(final CommandSourceStack source, final int time) {
++        if (!checkGlobalPermission(source)) {
++            return 0;
++        }
+         boolean interrupted = getManager(source).requestGameToSprint(time);
+         if (interrupted) {
+             source.sendSuccess(() -> Component.translatable("commands.tick.sprint.stop.success"), true);
+@@ -112,6 +133,12 @@ public class TickCommand {
+     }
+ 
+     private static int setFreeze(final CommandSourceStack source, final boolean freeze) {
++        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
++            return io.papermc.paper.lab.zone.LabTickZones.handleFreeze(source, freeze);
++        }
++        if (!checkGlobalPermission(source)) {
++            return 0;
++        }
+         ServerTickRateManager manager = getManager(source);
+         if (freeze) {
+             if (manager.isSprinting()) {
+@@ -134,6 +161,12 @@ public class TickCommand {
+     }
+ 
+     private static int step(final CommandSourceStack source, final int advance) {
++        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
++            return io.papermc.paper.lab.zone.LabTickZones.handleStep(source, advance);
++        }
++        if (!checkGlobalPermission(source)) {
++            return 0;
++        }
+         ServerTickRateManager manager = getManager(source);
+         boolean success = manager.stepGameIfPaused(advance);
+         if (success) {
+@@ -146,6 +179,12 @@ public class TickCommand {
+     }
+ 
+     private static int stopStepping(final CommandSourceStack source) {
++        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
++            return io.papermc.paper.lab.zone.LabTickZones.handleStopStepping(source);
++        }
++        if (!checkGlobalPermission(source)) {
++            return 0;
++        }
+         ServerTickRateManager manager = getManager(source);
+         boolean success = manager.stopStepping();
+         if (success) {
+@@ -158,6 +197,9 @@ public class TickCommand {
+     }
+ 
+     private static int stopSprinting(final CommandSourceStack source) {
++        if (!checkGlobalPermission(source)) {
++            return 0;
++        }
+         ServerTickRateManager manager = getManager(source);
+         boolean success = manager.stopSprinting();
+         if (success) {
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 1e0d5f9d8d0f9e5e129a3fef7f7b0b40ebda8078..e8ae0936a67ea468f07ac22dbdbc7104fbab0f2a 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -899,7 +899,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+                 .forEach(
+                     entity -> {
+                         if (!entity.isRemoved()) {
+-                            if (!tickRateManager.isEntityFrozen(entity)) {
++                            if (!tickRateManager.isEntityFrozen(entity) && !io.papermc.paper.lab.zone.LabTickZones.isEntityFrozen(this, entity)) {
+                                 profiler.push("checkDespawn");
+                                 entity.checkDespawn();
+                                 profiler.pop();
+@@ -943,6 +943,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         this.debugSynchronizers.tick(this.server.debugSubscribers());
+         profiler.pop();
+         io.papermc.paper.lab.cplay.CPlayManager.onLevelTickReturn(this); // Paper Lab - Capture and Playback
++        io.papermc.paper.lab.zone.LabTickZones.onLevelTick(this); // Paper Lab - Tick Zones
+     }
+ 
+     @Override
+@@ -1362,6 +1363,9 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     }
+ 
+     private void tickFluid(final BlockPos pos, final Fluid type) {
++        if (!io.papermc.paper.lab.zone.LabTickZones.shouldTickFluid(this, pos, type)) {
++            return;
++        }
+         BlockState blockState = this.getBlockState(pos);
+         FluidState fluidState = blockState.getFluidState();
+         if (fluidState.is(type)) {
+@@ -1376,6 +1380,9 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     }
+ 
+     private void tickBlock(final BlockPos pos, final Block type) {
++        if (!io.papermc.paper.lab.zone.LabTickZones.shouldTickBlock(this, pos, type)) {
++            return;
++        }
+         BlockState state = this.getBlockState(pos);
+         if (state.is(type)) {
+             io.papermc.paper.lab.microtiming.LabMicroTiming.onTileTick(this, pos, type); // Paper Lab - /log microtiming
+@@ -2068,7 +2075,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         while (io.papermc.paper.lab.cplay.CPlayManager.onRunBlockEventsLoop(this, this.blockEvents.size())) { // Paper Lab - Capture and Playback
+             BlockEventData eventData = this.blockEvents.removeFirst();
+             io.papermc.paper.lab.cplay.CPlayManager.onBlockEventProcessed(this); // Paper Lab - Capture and Playback
+-            if (this.shouldTickBlocksAt(eventData.pos())) {
++            if (this.shouldTickBlocksAt(eventData.pos()) && io.papermc.paper.lab.zone.LabTickZones.shouldRunBlockEvent(this, eventData.pos(), eventData)) {
+                 io.papermc.paper.lab.microtiming.LabMicroTiming.pushDepth(); // Paper Lab - /log microtiming
+                 try {
+                 if (this.doBlockEvent(eventData)) {
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 475363cfbf5d5f5dc40493f176b0af218df2d7e0..bf815f4cd5d913a00c3626da16ec9f54426e8c0f 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1504,7 +1504,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         // Paper end - Fix MC-117075 use removeAll
+             if (ticker.isRemoved()) {
+                 toRemove.add(ticker); // Paper - Fix MC-117075 use removeAll
+-            } else if (tickBlockEntities && this.shouldTickBlocksAt(ticker.getPos())) {
++            } else if (tickBlockEntities && this.shouldTickBlocksAt(ticker.getPos()) && io.papermc.paper.lab.zone.LabTickZones.shouldTickBlockEntity(this, ticker.getPos())) {
+                 ticker.tick();
+                 // Paper start - rewrite chunk system
+                 if ((++tickedEntities & 7) == 0) {

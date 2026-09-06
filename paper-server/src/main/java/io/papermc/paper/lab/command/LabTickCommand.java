@@ -61,6 +61,14 @@ public final class LabTickCommand {
     }
 
     private static int toggle(final CommandSourceStack source) {
+        if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
+            return io.papermc.paper.lab.zone.LabTickZones.handleToggle(source);
+        }
+        if (io.papermc.paper.lab.zone.LabTickZones.isEnabled() && source.isPlayer()
+            && !source.getBukkitSender().hasPermission("paperlab.tick.global")) {
+            source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));
+            return 0;
+        }
         final ServerTickRateManager manager = source.getServer().tickRateManager();
         final boolean freeze = !manager.isFrozen();
         if (freeze) {
@@ -79,6 +87,11 @@ public final class LabTickCommand {
     }
 
     private static int warp(final CommandSourceStack source, final int ticks) {
+        if (io.papermc.paper.lab.zone.LabTickZones.isEnabled() && source.isPlayer()
+            && !source.getBukkitSender().hasPermission("paperlab.tick.global")) {
+            source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));
+            return 0;
+        }
         final ServerTickRateManager manager = source.getServer().tickRateManager();
         manager.requestGameToSprint(ticks);
         source.sendSuccess(() -> Component.literal("warp " + ticks + "t")
@@ -87,6 +100,11 @@ public final class LabTickCommand {
     }
 
     private static int stopWarp(final CommandSourceStack source) {
+        if (io.papermc.paper.lab.zone.LabTickZones.isEnabled() && source.isPlayer()
+            && !source.getBukkitSender().hasPermission("paperlab.tick.global")) {
+            source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));
+            return 0;
+        }
         final boolean stopped = source.getServer().tickRateManager().stopSprinting();
         source.sendSuccess(() -> Component.literal(stopped ? "warp stop" : "was not running")
             .withStyle(ChatFormatting.DARK_GRAY), false);
