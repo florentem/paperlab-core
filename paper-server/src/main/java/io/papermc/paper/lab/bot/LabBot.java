@@ -7,39 +7,38 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * AFK-бот: настоящий {@link ServerPlayer} без клиента.
+ * AFK bot: a real {@link ServerPlayer} without a client.
  *
- * <p><b>Один канонический тик.</b> Класс намеренно <i>не переопределяет</i>
- * {@code tick()}. Обоснование — подтверждено кодом:
+ * <p><b>One canonical tick.</b> This class deliberately does <i>not</i> override
+ * {@code tick()}. The reasoning, confirmed against the code:
  *
  * <ul>
- *   <li>игроки добавляются в {@code ServerLevel.entityTickList}
- *       (колбэки сущностей, {@code ServerLevel.java:2841}), поэтому
- *       {@code ServerPlayer.tick()} вызывается обычным тиком сущностей уровня —
- *       ровно как у живого игрока;</li>
- *   <li>{@code ServerPlayer.doTick()} у живого игрока вызывается из
- *       {@code ServerGamePacketListenerImpl.tick()} ({@code :387}), которую тикает
- *       {@code Connection.tick()} из {@code ServerConnectionListener.tick()};</li>
- *   <li>внутри {@code MinecraftServer.tickChildren} порядок фаз такой:
- *       {@code levels} (тик уровней и сущностей) → {@code connection}
- *       ({@code tickConnection()}, {@code MinecraftServer.java:1838}) → {@code players}.</li>
+ *   <li>players are added to {@code ServerLevel.entityTickList} (entity callbacks,
+ *       {@code ServerLevel.java:2841}), so {@code ServerPlayer.tick()} is invoked by the
+ *       level's ordinary entity tick — exactly as for a live player;</li>
+ *   <li>for a live player {@code ServerPlayer.doTick()} is called from
+ *       {@code ServerGamePacketListenerImpl.tick()} ({@code :387}), which is ticked by
+ *       {@code Connection.tick()} from {@code ServerConnectionListener.tick()};</li>
+ *   <li>inside {@code MinecraftServer.tickChildren} the phase order is: {@code levels}
+ *       (level and entity ticking), then {@code connection} ({@code tickConnection()},
+ *       {@code MinecraftServer.java:1838}), then {@code players}.</li>
  * </ul>
  *
- * Значит у живого игрока порядок внутри тика: <b>{@code tick()} → затем {@code doTick()}</b>,
- * причём в разных фазах. Поэтому {@link LabBotRegistry} вызывает {@code doTick()} из хука,
- * поставленного сразу после {@code tickConnection()}, а {@code tick()} приходит сам от уровня.
- * Так совпадают и фаза, и порядок.
+ * So within one tick a live player sees <b>{@code tick()} and then {@code doTick()}</b>,
+ * in different phases. Hence {@link LabBotRegistry} calls {@code doTick()} from a hook
+ * placed right after {@code tickConnection()}, while {@code tick()} arrives from the level
+ * on its own. That way both the phase and the order match.
  *
- * <p>Fabric Carpet добивается того же относительного порядка иначе: переопределяет
- * {@code tick()} и вызывает внутри {@code super.tick()}, затем {@code doTick()}. Порядок
- * получается верный, но оба вызова оказываются в фазе сущностей, до фазы соединений.
- * Здесь выбран хук, чтобы совпадала ещё и фаза.
+ * <p>Fabric Carpet reaches the same relative order differently: it overrides {@code tick()}
+ * and calls {@code super.tick()} then {@code doTick()} inside. The order comes out right,
+ * but both calls land in the entity phase, before the connection phase. The hook was
+ * chosen here so that the phase matches too.
  *
- * <p><b>Что НЕ доказано:</b> эквивалентность бота живому игроку. Совпадение порядка вызовов
- * — необходимое условие, но не доказательство. Отдельные проверки нужны минимум по:
- * lifecycle (spawn/remove/death/respawn/restart), chunk tickets, попаданию в
- * {@code NearbyPlayers} и локальный мобкап, EAR-иммунитетам поблизости, боевым действиям.
- * До прохождения этих тестов бот — инструмент нагрузки, а не эталон игрока.
+ * <p><b>What is NOT proven:</b> that a bot is equivalent to a live player. Matching call
+ * order is a necessary condition, not a proof. Separate checks are still needed for at
+ * least: lifecycle (spawn/remove/death/respawn/restart), chunk tickets, presence in
+ * {@code NearbyPlayers} and the local mobcap, EAR immunity nearby, and combat actions.
+ * Until those pass, a bot is a load instrument, not a reference player.
  */
 public final class LabBot extends ServerPlayer {
 
@@ -47,12 +46,12 @@ public final class LabBot extends ServerPlayer {
     private final LabActionPack actions = new LabActionPack(this);
 
     /**
-     * Чем бот был создан. Нужно, чтобы поднять его заново после смерти: живому игроку
-     * респавн присылает клиент, а боту его слать некому.
+     * How the bot was created. Needed to bring it back after death: a live player's
+     * respawn is sent by their client, and a bot has nobody to send it.
      */
     private LabBotRegistry.Spec spec;
 
-    /** Поднимать ли бота после смерти. По умолчанию нет — как было раньше. */
+    /** Whether to respawn the bot after death. Off by default, as before. */
     private boolean autoRespawn;
 
     LabBot(final MinecraftServer server,
@@ -88,12 +87,12 @@ public final class LabBot extends ServerPlayer {
     }
 
     /**
-     * Вызывается {@link LabBotRegistry} в фазе соединений — там, где живому игроку
-     * это делает его packet listener.
+     * Called by {@link LabBotRegistry} in the connection phase — where a live player's
+     * packet listener does it.
      */
     void tickConnectionPhase() {
-        // Действия идут до doTick(): у живого игрока в этой фазе сначала
-        // обрабатываются входящие пакеты, и только потом вызывается doTick().
+        // Actions run before doTick(): in this phase a live player's incoming packets are
+        // processed first, and only then is doTick() called.
         this.actions.tick();
         this.doTick();
     }

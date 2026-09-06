@@ -3,23 +3,23 @@ package io.papermc.paper.lab.bot;
 import java.util.Locale;
 
 /**
- * Действие бота, повторяющее нажатие клавиши игроком.
+ * A bot action mirroring a player's key press.
  *
- * <p><b>Порядок объявления значим.</b> {@link LabActionPack} обходит действия
- * в порядке ordinal через {@code EnumMap}, и Carpet опирается на то же:
- * {@code USE} обрабатывается раньше {@code ATTACK}, потому что успешное
- * использование в этом тике отменяет атаку.
+ * <p><b>Declaration order is significant.</b> {@link LabActionPack} iterates actions in
+ * ordinal order through an {@code EnumMap}, and Carpet relies on the same thing:
+ * {@code USE} is handled before {@code ATTACK}, because a successful use cancels the
+ * attack in that tick.
  */
 public enum LabAction {
 
-    /** Правая кнопка: использование предмета, блока или сущности. */
+    /** Right button: using an item, a block or an entity. */
     USE,
-    /** Левая кнопка: удар по сущности либо добыча блока под прицелом. */
+    /** Left button: hitting an entity or mining the block under the crosshair. */
     ATTACK,
     JUMP,
-    /** Выбросить один предмет из выбранного слота. */
+    /** Drop one item from the selected slot. */
     DROP_ITEM,
-    /** Выбросить весь стек из выбранного слота. */
+    /** Drop the whole stack from the selected slot. */
     DROP_STACK,
     SWAP_HANDS;
 
@@ -28,14 +28,14 @@ public enum LabAction {
     }
 
     /**
-     * Ритм повторения — модель Carpet {@code Action}.
+     * Repetition rhythm — Carpet's {@code Action} model.
      *
-     * <p>Имена компонентов специально не совпадают с именами фабрик: в record любой
-     * метод с именем компонента обязан быть его аксессором.
+     * <p>The component names deliberately differ from the factory names: in a record, any
+     * method named after a component must be its accessor.
      *
-     * @param limit       сколько раз выполнить; {@code -1} — без ограничения
-     * @param periodTicks период в тиках
-     * @param hold        удержание кнопки, а не отдельные нажатия
+     * @param limit       how many times to run; {@code -1} means unlimited
+     * @param periodTicks period in ticks
+     * @param hold        hold the button rather than press it repeatedly
      */
     public record Rhythm(int limit, int periodTicks, boolean hold) {
 
@@ -52,13 +52,13 @@ public enum LabAction {
         }
 
         /**
-         * Нужно ли сбрасывать удержание в том же тике, что и выполнение.
+         * Whether the hold must be released in the same tick as the execution.
          *
-         * <p>Carpet: {@code if (interval == 1 && !isContinuous) inactiveTick(...)} перед
-         * {@code execute}. Без этого при {@code interval 1} предмет остаётся «зажатым»,
-         * {@code itemUseCooldown} не обнуляется, и вместо одного использования за тик
-         * получается одно за четыре — ровно тот симптом, когда {@code interval 1}
-         * работает медленнее {@code interval 2}.
+         * <p>Carpet: {@code if (interval == 1 && !isContinuous) inactiveTick(...)} before
+         * {@code execute}. Without it, at {@code interval 1} the item stays held,
+         * {@code itemUseCooldown} never resets, and instead of one use per tick you get one
+         * per four — exactly the symptom where {@code interval 1} is slower than
+         * {@code interval 2}.
          */
         public boolean releaseBeforeExecute() {
             return this.periodTicks == 1 && !this.hold;
@@ -72,12 +72,12 @@ public enum LabAction {
         }
     }
 
-    /** Состояние повторения одного действия. */
+    /** Repetition state of a single action. */
     static final class Running {
 
         private final Rhythm rhythm;
         private int done;
-        /** Тиков до следующего срабатывания. Carpet: {@code next = interval + offset}. */
+        /** Ticks until the next firing. Carpet: {@code next = interval + offset}. */
         private int next;
         boolean finished;
 
@@ -90,7 +90,7 @@ public enum LabAction {
             return this.rhythm;
         }
 
-        /** @return true, если в этом тике действие надо выполнить */
+        /** @return true if the action must run this tick */
         boolean due() {
             if (this.finished) {
                 return false;
@@ -103,7 +103,7 @@ public enum LabAction {
             return true;
         }
 
-        /** Учесть выполнение и, если задан лимит, завершить действие. */
+        /** Account for a run and, if a limit is set, finish the action. */
         void executed() {
             this.done++;
             if (this.rhythm.limit() > 0 && this.done >= this.rhythm.limit()) {

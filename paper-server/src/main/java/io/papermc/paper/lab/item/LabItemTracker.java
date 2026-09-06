@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Отслеживание жизненного цикла сущностей предметов (ItemEntity) для /log item.
+ * Tracks the lifecycle of item entities (ItemEntity) for /log item.
  */
 public final class LabItemTracker {
 

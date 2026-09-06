@@ -12,13 +12,13 @@ import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
- * Прицеливание бота: блоки <b>и</b> сущности.
+ * Bot aiming: blocks <b>and</b> entities.
  *
- * <p>Штатный {@code Entity.pick(...)} трассирует только блоки — он сводится к
- * {@code level.clip(...)}. Если использовать его как «что под прицелом», бот будет
- * ломать блоки, но никогда не ударит ни одну сущность. Поэтому нужен собственный
- * трассировщик, как {@code carpet.script.utils.Tracer}: считаем попадание по блокам,
- * затем по сущностям, и берём то, что ближе.
+ * <p>The stock {@code Entity.pick(...)} traces blocks only — it reduces to
+ * {@code level.clip(...)}. Used as "what is under the crosshair" it makes the bot break
+ * blocks but never hit a single entity. Hence a tracer of our own, like
+ * {@code carpet.script.utils.Tracer}: compute the block hit, then the entity hit, and take
+ * whichever is closer.
  */
 public final class LabTracer {
 
@@ -70,7 +70,7 @@ public final class LabTracer {
                 final Vec3 hitPos = hit.get();
                 final double dist = eye.distanceToSqr(hitPos);
                 if (dist < bestDist || bestDist == 0.0D) {
-                    // Сущность в том же транспорте не перекрывает цель.
+                    // An entity in the same vehicle does not occlude the target.
                     if (current.getRootVehicle() == source.getRootVehicle()) {
                         if (bestDist == 0.0D) {
                             best = current;

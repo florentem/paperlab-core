@@ -8,38 +8,39 @@ import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.ChunkPos;
 
 /**
- * Счётчики исходов попыток естественного спавна.
+ * Outcome counters for natural spawn attempts.
  *
- * <p>Отвечает на вопрос «почему ферма не спавнит»: движок не сообщает, где именно
- * остановилась попытка, а причин несколько и они разные по смыслу.
+ * <p>Answers "why is the farm not spawning": the engine never reports where an attempt
+ * stopped, and there are several reasons that mean different things.
  *
- * <p>Считаем только факты, которые движок уже вычислил. Никаких повторных проверок:
- * {@code isValidSpawnPostitionForType} потребляет RNG и вызывает событие, поэтому
- * переспрашивать его ради статистики нельзя.
+ * <p>Only facts the engine has already computed are counted. No re-checking:
+ * {@code isValidSpawnPostitionForType} consumes RNG and fires an event, so it must not be
+ * asked again just for statistics.
  *
- * <p>Данные копятся по миру за скользящее окно и обнуляются при снятии подписки.
+ * <p>Data accumulates per world over a sliding window and is cleared when the last
+ * subscription goes away.
  */
 public final class SpawnTrace {
 
     /**
-     * Где остановилась попытка.
+     * Where the attempt stopped.
      *
-     * <p><b>Единицы разные, и это важно при чтении.</b> {@link #CAP_FULL} и {@link #ATTEMPT}
-     * считаются на каждый проход «чанк x категория» в цикле спавна. {@link #POSITION},
-     * {@link #PLUGIN} и {@link #SPAWNED} — на каждую отдельную позицию внутри прохода,
-     * а позиций за проход пробуется несколько. Поэтому «позиция» законно бывает больше
-     * «проходов», и складывать их в одну сумму нельзя.
+     * <p><b>The units differ, and that matters when reading them.</b> {@link #CAP_FULL} and
+     * {@link #ATTEMPT} are counted per chunk x category pass of the spawn loop.
+     * {@link #POSITION}, {@link #PLUGIN} and {@link #SPAWNED} are counted per individual
+     * position within a pass, and several positions are tried per pass. So "position"
+     * legitimately exceeds "passes", and they must not be added into one total.
      */
     public enum Outcome {
-        /** Категория даже не рассматривалась: бюджет чанка исчерпан. */
+        /** The category was never considered: the chunk budget is exhausted. */
         CAP_FULL("cap"),
-        /** Бюджет был, попытки пошли. */
+        /** There was budget, so attempts went ahead. */
         ATTEMPT("passes"),
-        /** Позиция не подошла: свет, блок, высота, расстояние до игрока. */
+        /** The position did not qualify: light, block, height, distance to a player. */
         POSITION("position"),
-        /** Плагин отменил через PreCreatureSpawnEvent. */
+        /** A plugin cancelled it through PreCreatureSpawnEvent. */
         PLUGIN("plugin"),
-        /** Моб создан и добавлен в мир. */
+        /** The mob was created and added to the world. */
         SPAWNED("spawned");
 
         private final String label;
@@ -55,10 +56,10 @@ public final class SpawnTrace {
 
     private static final int OUTCOMES = Outcome.values().length;
 
-    /** мир → категория → счётчики исходов. */
+    /** world -> category -> outcome counters. */
     private static final Map<String, Map<MobCategory, AtomicLongArray>> DATA = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Включается только когда кто-то подписан: иначе горячий путь спавна не трогаем. */
+    /** Enabled only while someone is subscribed: otherwise the hot spawn path is left alone. */
     private static volatile boolean enabled;
 
     private SpawnTrace() {
@@ -80,10 +81,10 @@ public final class SpawnTrace {
     }
 
     /**
-     * Записать исход. Вызывается из хуков в {@code NaturalSpawner}.
+     * Record an outcome. Called from hooks in {@code NaturalSpawner}.
      *
-     * <p>Проверка {@link #enabled} стоит первой и в вызывающем коде тоже — чтобы при
-     * выключенной трассе стоимость сводилась к чтению одного {@code volatile} поля.
+     * <p>The {@link #enabled} check comes first here and in the calling code too, so that
+     * with the trace off the cost is one {@code volatile} field read.
      */
     public static void record(final ServerLevel level, final MobCategory category, final Outcome outcome) {
         if (!enabled) {
@@ -94,16 +95,16 @@ public final class SpawnTrace {
             .incrementAndGet(outcome.ordinal());
     }
 
-    /** Перегрузка для мест, где под рукой только позиция чанка. */
+    /** Overload for places where only a chunk position is at hand. */
     public static void record(final ServerLevel level, final ChunkPos ignored,
                               final MobCategory category, final Outcome outcome) {
         record(level, category, outcome);
     }
 
     /**
-     * Снимок по одной категории в одном мире.
+     * A snapshot for one category in one world.
      *
-     * @return массив длиной {@link Outcome#values()}, либо {@code null}, если данных нет
+     * @return an array as long as {@link Outcome#values()}, or {@code null} if there is no data
      */
     public static long[] snapshot(final ServerLevel level, final MobCategory category) {
         final Map<MobCategory, AtomicLongArray> byCategory = DATA.get(level.dimension().identifier().toString());

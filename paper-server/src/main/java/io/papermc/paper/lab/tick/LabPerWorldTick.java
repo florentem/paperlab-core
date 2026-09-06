@@ -10,7 +10,7 @@ import net.minecraft.server.level.ServerLevelTickRateManager;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * Координатор независимого тикрейта и заморозки по мирам (/carpet perWorldTick).
+ * Coordinator for independent per-world tick rate and freeze (/carpet perWorldTick).
  */
 public final class LabPerWorldTick {
 
@@ -35,8 +35,8 @@ public final class LabPerWorldTick {
 
         if (value) {
             // false -> true:
-            // Инициализируем каждый мир текущим глобальным состоянием сервера (тикрейт, заморозка),
-            // чтобы все миры стартовали согласованно.
+            // Seed every world with the server's current global state (tick rate, freeze) so
+            // that they all start in agreement.
             final ServerTickRateManager global = server.tickRateManager();
             for (final ServerLevel level : server.getAllLevels()) {
                 final ServerLevelTickRateManager local = level.perWorldTickRateManager();
@@ -49,7 +49,7 @@ public final class LabPerWorldTick {
             }
         } else {
             // true -> false:
-            // Глобальное состояние сервера наследуется от Overworld
+            // The server's global state is inherited from the overworld.
             final ServerLevel overworld = server.overworld();
             final ServerTickRateManager global = server.tickRateManager();
             if (overworld != null && overworld.perWorldTickRateManager() != null) {
@@ -58,7 +58,7 @@ public final class LabPerWorldTick {
                 global.setFrozen(owManager.isFrozen());
             }
 
-            // Во всех мирах прерываем спринты и шаги
+            // Abort sprints and steps in every world.
             for (final ServerLevel level : server.getAllLevels()) {
                 final ServerLevelTickRateManager local = level.perWorldTickRateManager();
                 if (local != null) {
@@ -67,7 +67,7 @@ public final class LabPerWorldTick {
                 }
             }
 
-            // Принудительно рассылаем единый актуальный пакет состояния тика ВСЕМ игрокам
+            // Force one up-to-date ticking-state packet out to EVERY player.
             final ClientboundTickingStatePacket statePacket = ClientboundTickingStatePacket.from(global);
             final ClientboundTickingStepPacket stepPacket = ClientboundTickingStepPacket.from(global);
             for (final ServerPlayer player : server.getPlayerList().getPlayers()) {

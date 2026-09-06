@@ -19,42 +19,43 @@ import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
- * Действия бота: имитация нажатий игрока.
+ * Bot actions: simulating a player's key presses.
  *
- * <p>Порядок вызовов и тайминги повторяют Carpet {@code EntityPlayerActionPack} —
- * это ровно то, что сервер делает при пакетах живого клиента:
+ * <p>Call order and timings follow Carpet's {@code EntityPlayerActionPack} — which is
+ * exactly what the server does for a live client's packets:
  * {@code gameMode.handleBlockBreakAction}, {@code gameMode.useItemOn},
  * {@code entity.interact}, {@code player.attack}.
  *
- * <p>Три места, где отклонение от Carpet ломает поведение, поэтому воспроизведены буквально:
+ * <p>Three places where deviating from Carpet breaks behaviour, so they are reproduced
+ * literally:
  * <ol>
- *   <li>прицеливание — блоки <b>и</b> сущности ({@link LabTracer}); штатный
- *       {@code Entity.pick} видит только блоки, из-за чего бот ломает блоки,
- *       но не бьёт сущности;</li>
- *   <li>при {@code interval 1} удержание сбрасывается <b>в том же тике</b>, до выполнения
- *       (см. {@link LabAction.Rhythm#releaseBeforeExecute()});</li>
- *   <li>успешное {@code use} в этом тике отменяет {@code attack}, а успешная атака
- *       при неуспешном use даёт use повторную попытку — как в
+ *   <li>aiming covers blocks <b>and</b> entities ({@link LabTracer}); the stock
+ *       {@code Entity.pick} sees blocks only, which makes the bot break blocks but never
+ *       hit entities;</li>
+ *   <li>at {@code interval 1} the hold is released <b>in the same tick</b>, before
+ *       execution (see {@link LabAction.Rhythm#releaseBeforeExecute()});</li>
+ *   <li>a successful {@code use} this tick cancels {@code attack}, while a successful
+ *       attack with a failed use gives use another try — as in
  *       {@code MinecraftClient.handleInputEvents}.</li>
  * </ol>
  */
 public final class LabActionPack {
 
     private final LabBot bot;
-    /** EnumMap обходится по ordinal: USE раньше ATTACK — как TreeMap у Carpet. */
+    /** EnumMap iterates by ordinal: USE before ATTACK, like Carpet's TreeMap. */
     private final Map<LabAction, LabAction.Running> running = new EnumMap<>(LabAction.class);
 
     /**
-     * Ход вперёд-назад и вбок, в долях от полной скорости.
+     * Forward/back and sideways movement, as a fraction of full speed.
      *
-     * <p>Значения кладутся в {@code zza} и {@code xxa} — те же поля, куда живому игроку
-     * пишет обработчик его пакетов движения. Дальше всё делает обычный тик сущности,
-     * поэтому бот идёт, плывёт и управляет транспортом ровно как игрок.
+     * <p>The values go into {@code zza} and {@code xxa} — the same fields the movement
+     * packet handler writes for a live player. The ordinary entity tick does the rest, so
+     * the bot walks, swims and steers vehicles exactly as a player does.
      */
     private float forward;
     private float strafing;
 
-    /** Блок, который бот сейчас копает, и накопленный прогресс. */
+    /** The block the bot is currently mining, and the progress accumulated. */
     private @Nullable BlockPos currentBlock;
     private float blockDamage;
     private int blockHitDelay;
@@ -85,15 +86,15 @@ public final class LabActionPack {
     }
 
     /**
-     * Ход: {@code 1} — вперёд, {@code -1} — назад.
+     * Movement: {@code 1} forward, {@code -1} back.
      *
-     * <p>Значение держится, пока его не сменят: это «клавиша зажата», а не шаг.
+     * <p>The value holds until changed: this is a held key, not a step.
      */
     public void setForward(final float value) {
         this.forward = value;
     }
 
-    /** Ход вбок: {@code 1} — влево, {@code -1} — вправо. Как у живого игрока. */
+    /** Strafing: {@code 1} left, {@code -1} right. Same as for a live player. */
     public void setStrafing(final float value) {
         this.strafing = value;
     }
@@ -114,13 +115,13 @@ public final class LabActionPack {
     }
 
     /**
-     * Сесть в ближайший транспорт в радиусе трёх блоков.
+     * Mount the nearest vehicle within three blocks.
      *
-     * <p>{@code onlyRideables} — только лодки, вагонетки и лошади; иначе годится любая
-     * сущность, на которую можно сесть. Лошадь сажает через {@code mobInteract}: у неё
-     * посадка идёт через взаимодействие, а не через {@code startRiding}.
+     * <p>{@code onlyRideables} restricts to boats, minecarts and horses; otherwise any
+     * mountable entity qualifies. Horses are mounted via {@code mobInteract}: for them
+     * mounting goes through interaction rather than {@code startRiding}.
      *
-     * @return {@code true}, если нашли, на что сесть
+     * @return {@code true} if something to ride was found
      */
     public boolean mount(final boolean onlyRideables) {
         final java.util.List<net.minecraft.world.entity.Entity> candidates = this.bot.level().getEntities(
@@ -172,14 +173,14 @@ public final class LabActionPack {
         }
         this.running.entrySet().removeIf(entry -> entry.getValue().finished);
 
-        // null — действие в этом тике не выполнялось; true/false — результат выполнения.
+        // null means the action did not run this tick; true/false is its result.
         final Map<LabAction, Boolean> attempts = new EnumMap<>(LabAction.class);
 
         for (final Map.Entry<LabAction, LabAction.Running> entry : this.running.entrySet()) {
             final LabAction action = entry.getKey();
             final LabAction.Running state = entry.getValue();
 
-            // Успешное использование отменяет атаку в этом же тике.
+            // A successful use cancels the attack in the same tick.
             final boolean useSucceeded = Boolean.TRUE.equals(attempts.get(LabAction.USE));
             if (!(useSucceeded && action == LabAction.ATTACK)) {
                 final Boolean result = this.tickAction(action, state);
@@ -188,7 +189,7 @@ public final class LabActionPack {
                 }
             }
 
-            // Атака прошла, а use в этом тике не удался — даём use ещё попытку.
+            // The attack landed but use failed this tick — give use another try.
             if (action == LabAction.ATTACK
                 && Boolean.TRUE.equals(attempts.get(LabAction.ATTACK))
                 && Boolean.FALSE.equals(attempts.get(LabAction.USE))) {
@@ -202,12 +203,13 @@ public final class LabActionPack {
     }
 
     /**
-     * Перекладывает ход в поля ввода сущности.
+     * Copies movement into the entity's input fields.
      *
-     * <p>Делается каждый тик, а не один раз при команде: движок обнуляет {@code zza} и
-     * {@code xxa} по ходу тика, и без повторной записи бот делает один шаг и встаёт.
+     * <p>Done every tick rather than once per command: the engine zeroes {@code zza} and
+     * {@code xxa} as the tick proceeds, and without rewriting them the bot takes one step
+     * and stops.
      *
-     * <p>Приседание замедляет так же, как живого игрока.
+     * <p>Sneaking slows it down the same way it slows a live player.
      */
     private void applyMovement() {
         final float velocity = this.bot.isShiftKeyDown() ? 0.3F : 1.0F;
@@ -221,8 +223,8 @@ public final class LabActionPack {
             return null;
         }
         if (state.rhythm().releaseBeforeExecute()) {
-            // Освобождаем удержание до выполнения — иначе itemUseCooldown не обнулится
-            // и interval 1 будет работать медленнее interval 2.
+            // Release the hold before executing — otherwise itemUseCooldown never resets
+            // and interval 1 ends up slower than interval 2.
             this.inactiveTick(action);
         }
         final boolean result = this.execute(action, state);
@@ -230,7 +232,7 @@ public final class LabActionPack {
         return result;
     }
 
-    /** Сброс удержания: прерывание добычи и отпускание предмета. */
+    /** Release the hold: abort mining and stop using the item. */
     private void inactiveTick(final LabAction action) {
         switch (action) {
             case ATTACK -> this.abortMining();
@@ -267,8 +269,8 @@ public final class LabActionPack {
     }
 
     /**
-     * Дальность как у игрока: для блоков и сущностей она разная, поэтому трассируем
-     * по большей, а решение о применимости оставляем самим вызовам движка.
+     * Reach as a player has it: blocks and entities use different distances, so we trace
+     * by the larger one and leave the applicability decision to the engine calls.
      */
     private HitResult target() {
         final double reach = Math.max(this.bot.blockInteractionRange(), this.bot.entityInteractionRange());
@@ -283,7 +285,7 @@ public final class LabActionPack {
         switch (hit.getType()) {
             case ENTITY -> {
                 final Entity entity = ((EntityHitResult) hit).getEntity();
-                // При удержании удары не спамятся: живой игрок тоже ждёт откат.
+                // Hits are not spammed while held: a live player waits for the cooldown too.
                 if (!state.rhythm().hold()) {
                     this.bot.attack(entity);
                     this.bot.swing(InteractionHand.MAIN_HAND);
@@ -301,7 +303,7 @@ public final class LabActionPack {
         }
     }
 
-    /** @return true, если блок в этом тике был сломан */
+    /** @return true if a block was broken this tick */
     private boolean mine(final BlockHitResult hit) {
         if (this.blockHitDelay > 0) {
             this.blockHitDelay--;

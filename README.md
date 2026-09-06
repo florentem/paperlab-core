@@ -4,14 +4,24 @@
 Даёт инструменты в духе Carpet, адаптированные под особенности Paper — в первую очередь
 под **локальные мобкапы**, которых в ваниле и Fabric-модах нет.
 
-Вторая половина проекта — плагин **PaperLab**, он лежит отдельно. Здесь только то, чего
-плагином сделать нельзя.
+Вторая половина проекта — плагин [**PaperLab**](https://github.com/oCreker/paperlab).
+Здесь только то, чего плагином сделать физически нельзя: команды, права, HUD, счётчики
+и каналы клиентских модов живут там и переживают обновления Paper без единой правки.
+
+| | |
+|---|---|
+| [Команды](https://github.com/oCreker/paperlab/blob/master/docs/COMMANDS.md) | полный справочник |
+| [Правила](https://github.com/oCreker/paperlab/blob/master/docs/RULES.md) | `/carpet` и шесть правил |
+| [Права](https://github.com/oCreker/paperlab/blob/master/docs/PERMISSIONS.md) | всё дерево |
+| [Устройство](https://github.com/oCreker/paperlab/blob/master/docs/ARCHITECTURE.md) | почему деление именно такое |
 
 ---
 
 ## Что добавляет форк
 
-Ветка `lab` добавляет четыре минимальных feature-патча:
+Ветка `lab` добавляет четыре feature-патча. Основной — `0035`, **12 файлов и
+67 добавленных строк**. Держать их маленькими — сознательное решение: каждая строка
+патча оплачивается при каждом обновлении upstream, руками, в чужом коде.
 
 1. **`0035-Paper-Lab-hooks.patch`** — базовые точки перехвата:
    * `ChunkMap` (4 точки): наблюдатель вне переписи мобкапа, вне backoff, не расширяет область спавна, не грузит чанки;
@@ -40,6 +50,11 @@
    * `TickCommand`: перенаправление `/tick` на менеджер мира из контекста отправителя (`/execute in <мир> run tick ...`);
    * `PlayerList`: отправка сетевых пакетов тикрейта (`ClientboundTickingStatePacket`, `ClientboundTickingStepPacket`) игрокам конкретного мира;
    * `org.bukkit.World`: метод `world.getTickManager()` в Paper API.
+
+**Все четыре патча спят, пока плагин их не включит.** Без него сервер ведёт себя как
+обычный Paper. Горячие пути устроены так, чтобы неактивное состояние стоило одной
+проверки на пустоту: `SignalGetter.getSignal` зовётся на каждое обновление редстоуна
+в мире, и скрытая цена там недопустима — тем более на стенде, который меряет время.
 
 Основной код живёт обычными исходниками в `paper-server/src/main/java/io/papermc/paper/lab/`
 и в патч-систему не входит: `ghost/`, `spawn/`, `bot/`, `rules/`, `command/`, `cplay/`,
@@ -119,15 +134,14 @@ git status --short paper-server/patches    # должен измениться �
 
 ---
 
-## Лицензия и сторонние проекты
+## Лицензия
 
-Наследуется от Paper: **GPL-3.0** для серверной части, **MIT** для API. Подробности —
+Наследуется от Paper: **GPL-3.0** для серверной части, MIT для API. Подробности —
 [LICENSE.md](LICENSE.md), исходный README апстрима — [README-Paper.md](README-Paper.md).
 
-Всё, что добавлено этим форком, распространяется на тех же условиях (GPL-3.0).
-Хуки ядра используют концепции и обеспечивают совместимость со следующими проектами:
-* **[PaperMC](https://github.com/PaperMC/Paper)** — лицензия GPL-3.0 (сервер) / MIT (API).
-* **[Fabric Carpet](https://github.com/gnembon/fabric-carpet)** (автор [gnembon](https://github.com/gnembon)) — лицензия MIT. Архитектура ботов `/player` и команды `/tick`.
-* **[Carpet-TIS-Addition](https://github.com/TISUnion/Carpet-TIS-Addition)** (команда [TIS-Union](https://github.com/TISUnion)) — лицензия LGPL-3.0. Точки перехвата в `Entity.move()`, `ItemEntity` и блочных событиях для логгеров `item`, `movement` и `microtiming`.
-* **[Capture & Playback](https://modrinth.com/mod/capture-playback)** (автор [G4me4u](https://github.com/G4me4u)) — сетевой протокол G4mespeed; хуки ядра в `ServerLevel` и инъекция редстоун-сигналов в `SignalGetter` написаны заново под GPL-3.0.
+Что взято у других проектов — в [THIRD-PARTY.md](THIRD-PARTY.md): грамматика команд
+`/player` и `/tick` намеренно повторяет **Carpet Mod** (MIT, (c) gnembon), чужого кода
+в форке нет.
 
+Всё, что добавлено этим форком, распространяется на тех же условиях.
+Форматы взаимодействия совместимы с клиентским модом Capture & Playback (автор [G4me4u](https://modrinth.com/mod/capture-playback)); код хуков ядра и менеджера стримов написан заново под GPL-3.0.

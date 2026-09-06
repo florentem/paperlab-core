@@ -28,7 +28,7 @@ import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
- * {@code /player} — боты, синтаксис и поведение как в Carpet.
+ * {@code /player} — bots, with Carpet's syntax and behaviour.
  *
  * <pre>
  * /player &lt;name&gt; spawn [at &lt;x y z&gt;] [facing &lt;yaw pitch&gt;] [in &lt;dim&gt;] [&lt;gamemode&gt;]
@@ -36,16 +36,16 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * /player list
  * </pre>
  *
- * Бот наследует от вызывающего игрока позицию, поворот, измерение, режим игры и полёт.
+ * A bot inherits position, rotation, dimension, game mode and flight from the caller.
  */
 public final class LabPlayerCommand {
 
     /**
-     * Зарегистрированный узел. Нужен плагину: он вешает {@code /carpet player}
-     * перенаправлением сюда, чтобы весь набор инструментов табался из одной точки,
-     * а дерево при этом было ровно одно.
+     * The registered node. The plugin needs it: it hangs {@code /carpet player} here as a
+     * redirect, so that the whole toolset tab-completes from one place while the tree
+     * stays single.
      *
-     * <p>{@code null}, пока команда не зарегистрирована, — плагин это проверяет.
+     * <p>{@code null} until the command is registered — the plugin checks for that.
      */
     public static volatile @Nullable LiteralCommandNode<CommandSourceStack> node;
 
@@ -55,8 +55,8 @@ public final class LabPlayerCommand {
     public static void register(final CommandDispatcher<CommandSourceStack> dispatcher) {
         node = dispatcher.register(
             Commands.literal("player")
-                // Право bukkit, а не уровень оператора: так узел виден LuckPerms
-                // наравне с остальными командами инструментария (paperlab.player).
+                // A Bukkit permission rather than an op level: this way LuckPerms sees the
+                // node alongside the rest of the toolset (paperlab.player).
                 .requires(source -> io.papermc.paper.lab.rules.LabRuleState.playerCommandEnabled
                     && source.getBukkitSender().hasPermission("paperlab.player"))
                 .then(Commands.literal("list").executes(ctx -> list(ctx.getSource())))
@@ -257,8 +257,8 @@ public final class LabPlayerCommand {
         final CommandSourceStack source = ctx.getSource();
         final String name = StringArgumentType.getString(ctx, "name");
 
-        // Наследование от вызывающего — как в Carpet: позиция, поворот, измерение,
-        // режим игры и полёт берутся у отправителя, если не заданы явно.
+        // Inheriting from the caller, as in Carpet: position, rotation, dimension, game
+        // mode and flight come from the sender unless given explicitly.
         final Vec3 pos = posArg != null ? posArg
             : (source.getEntity() != null ? source.getPosition() : Vec3.atCenterOf(source.getLevel().getRespawnData().globalPos().pos()));
         final Vec2 rot = rotArg != null ? rotArg
@@ -274,7 +274,7 @@ public final class LabPlayerCommand {
         if (modeArg != null) {
             mode = modeArg;
         }
-        // Спектатор без полёта провалится из мира; выживание с полётом полетит само.
+        // A spectator without flight falls out of the world; survival with flight flies off.
         if (mode == GameType.SPECTATOR) {
             flying = true;
         } else if (mode.isSurvival()) {
@@ -283,8 +283,8 @@ public final class LabPlayerCommand {
 
         final String error = LabBotRegistry.spawn(
             source.getServer(), name, level, pos, rot.y, rot.x, mode, flying, false,
-            // Профиль резолвится в сети, поэтому ошибка создания приходит позже
-            // возврата из команды. Отправляем её тем же путём, что и синхронную.
+            // The profile resolves over the network, so a creation error arrives after the
+            // command returns. We deliver it the same way as a synchronous one.
             source::sendFailure);
         if (error != null) {
             source.sendFailure(Component.literal(error));
@@ -295,8 +295,8 @@ public final class LabPlayerCommand {
 
 
     /**
-     * Узел действия: {@code <действие> [once|continuous|interval <n>|stop]}.
-     * Без ритма — {@code once}, как в Carpet.
+     * An action node: {@code <action> [once|continuous|interval <n>|stop]}.
+     * With no rhythm it is {@code once}, as in Carpet.
      */
     private static LiteralArgumentBuilder<CommandSourceStack> action(final String literal,
                                                                     final LabAction act) {
@@ -346,9 +346,9 @@ public final class LabPlayerCommand {
 
 
     /**
-     * Режим наблюдателя для бота. Нужен и как инструмент, и как способ проверить сам
-     * режим без живого игрока: бота можно поставить рядом с фермой и посмотреть,
-     * меняются ли статусы чанков.
+     * Observer mode for a bot. Useful both as a tool and as a way to test the mode itself
+     * without a live player: park a bot next to a farm and watch whether the chunk
+     * statuses change.
      */
     private static int ghost(final CommandContext<CommandSourceStack> ctx) {
         final LabBot bot = resolve(ctx);
@@ -372,10 +372,10 @@ public final class LabPlayerCommand {
     }
 
     /**
-     * Ход. Значение держится, пока его не сменят: это «клавиша зажата», а не шаг.
+     * Movement. The value holds until changed: this is a held key, not a step.
      *
-     * <p>Нужно для двух вещей сразу: завести бота в точку и держать его в стену или
-     * в лодке, когда конструкция рассчитана на постоянное давление.
+     * <p>Needed for two things at once: walking a bot to a spot, and holding it against a
+     * wall or inside a boat when the contraption relies on constant pressure.
      */
     private static int move(final CommandContext<CommandSourceStack> ctx,
                             final float forward, final float strafing) {
@@ -388,7 +388,7 @@ public final class LabPlayerCommand {
         return 1;
     }
 
-    /** Поворот относительно текущего взгляда, в градусах. */
+    /** Rotation relative to the current look, in degrees. */
     private static int turn(final CommandContext<CommandSourceStack> ctx,
                             final float yaw, final float pitch) {
         final LabBot bot = resolve(ctx);
@@ -401,13 +401,13 @@ public final class LabPlayerCommand {
     }
 
     /**
-     * Сесть в ближайший транспорт.
+     * Mount the nearest vehicle.
      *
-     * <p>По умолчанию только лодки, вагонетки и лошади — то, что обычно и нужно.
-     * {@code mount anything} снимает ограничение.
+     * <p>By default boats, minecarts and horses only — usually what is wanted.
+     * {@code mount anything} lifts the restriction.
      *
-     * <p>Транспорт по теме исследования: пассажир выпадает из переписи мобкапа до
-     * фильтра причины спавна, и лодочные конструкции этим пользуются.
+     * <p>Vehicles are on topic for this research: a passenger drops out of the mobcap
+     * census before the spawn-reason filter, and boat contraptions exploit that.
      */
     private static int mount(final CommandContext<CommandSourceStack> ctx, final boolean onlyRideables) {
         final LabBot bot = resolve(ctx);
@@ -431,11 +431,11 @@ public final class LabPlayerCommand {
     }
 
     /**
-     * Поднимать ли бота после смерти.
+     * Whether to respawn the bot after death.
      *
-     * <p>Без этого ночной прогон обрывается на первой смерти: клиента у бота нет,
-     * а значит некому прислать запрос на возрождение. Бот поднимается через секунду
-     * на том же месте, где его создали.
+     * <p>Without it an overnight run ends at the first death: a bot has no client, so
+     * nobody sends the respawn request. The bot comes back a second later at the spot it
+     * was created at.
      */
     private static int respawn(final CommandContext<CommandSourceStack> ctx, final Boolean value) {
         final LabBot bot = resolve(ctx);

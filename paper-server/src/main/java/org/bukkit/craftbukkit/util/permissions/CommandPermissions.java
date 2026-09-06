@@ -64,6 +64,7 @@ public final class CommandPermissions {
         DefaultPermissions.registerPermission(CommandPermissions.PREFIX + "particle", "Allows the user to create particles", PermissionDefault.OP, commands);
         DefaultPermissions.registerPermission(CommandPermissions.PREFIX + "perf", "Allows the user to start/stop the vanilla performance metrics capture", PermissionDefault.OP, commands);
         DefaultPermissions.registerPermission(CommandPermissions.PREFIX + "place", "Allows the user to place features and structures", PermissionDefault.OP, commands);
+        DefaultPermissions.registerPermission(CommandPermissions.PREFIX + "player", "Allows the user to spawn and control lab bots", PermissionDefault.OP, commands); // Paper Lab
         DefaultPermissions.registerPermission(CommandPermissions.PREFIX + "playsound", "Allows the user to play a sound", PermissionDefault.OP, commands);
         DefaultPermissions.registerPermission(CommandPermissions.PREFIX + "random", "Allows the user to generate a random number", PermissionDefault.OP, commands);
         DefaultPermissions.registerPermission(CommandPermissions.PREFIX + "recipe", "Allows the user to give or take recipes", PermissionDefault.OP, commands);

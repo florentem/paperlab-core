@@ -1,49 +1,51 @@
 package io.papermc.paper.lab.rules;
 
 /**
- * Значения правил, которые нужно читать из ядра.
+ * Rule values that have to be read from the core.
  *
- * <p><b>Правила живут в плагине</b> — там реестр, парсинг, права, хранение значений по
- * умолчанию и команда {@code /carpet}. Сюда попадает только то, что читается в местах,
- * куда плагин дотянуться не может: код команд движка, конструктор сущности, горячий путь.
+ * <p><b>Rules live in the plugin</b> — the registry, parsing, permissions, default storage
+ * and the {@code /carpet} command are all there. Only what is read where a plugin cannot
+ * reach ends up here: engine command code, an entity constructor, a hot path.
  *
- * <p>Поля намеренно простые и {@code volatile}: читаются часто, пишутся редко и только
- * с главного потока. Никакой логики здесь нет и быть не должно — иначе правило окажется
- * размазано между плагином и ядром, и при следующем изменении придётся пересобирать jar.
+ * <p>The fields are deliberately plain and {@code volatile}: read often, written rarely and
+ * only from the main thread. There is no logic here and there must not be — otherwise a
+ * rule would be smeared across plugin and core, and the next change would mean rebuilding
+ * the jar.
  */
 public final class LabRuleState {
 
     /**
-     * Вызывают ли {@code /fill}, {@code /setblock} и {@code /clone} обновления соседей.
+     * Whether {@code /fill}, {@code /setblock} and {@code /clone} cause neighbour updates.
      *
-     * <p>{@code false} — блоки ставятся «тихо»: не срабатывают наблюдатели, не отваливаются
-     * факелы и репитеры, не запускается редстоун. Нужно, чтобы собрать конструкцию по
-     * шаблону и включить её один раз, а не наблюдать за самозапуском по ходу заливки.
+     * <p>{@code false} places blocks quietly: observers do not fire, torches and repeaters
+     * do not pop off, redstone does not start. Needed to assemble a contraption from a
+     * template and switch it on once, instead of watching it start itself mid-fill.
      */
     public static volatile boolean fillUpdates = true;
 
     /**
-     * Суффикс к именам ботов, например {@code _bot}.
+     * Suffix appended to bot names, for example {@code _bot}.
      *
-     * <p>Смысл: бот с именем живого игрока занимает его UUID, и сам игрок войти уже не
-     * может. С суффиксом имена расходятся, а скин всё равно берётся по имени <b>без</b>
-     * суффикса — бот выглядит как нужный игрок и никому не мешает.
+     * <p>The point: a bot named after a live player takes their UUID, and that player can
+     * no longer log in. A suffix makes the names diverge while the skin is still fetched
+     * for the name <b>without</b> it — the bot looks like the intended player and blocks
+     * nobody.
      */
     public static volatile String fakePlayerNameSuffix = "";
 
     /**
-     * Действуют ли наши дополнения к ванильному {@code /tick} ({@code toggle}, {@code warp}).
+     * Whether our additions to vanilla {@code /tick} ({@code toggle}, {@code warp}) apply.
      *
-     * <p>Имя как в Carpet. Выключение не убирает узлы из дерева — Brigadier строит его
-     * один раз при запуске, — а делает их недоступными через {@code requires}.
+     * <p>The name follows Carpet. Turning it off does not remove the nodes from the tree —
+     * Brigadier builds it once at startup — but makes them unavailable via {@code requires}.
      */
     public static volatile boolean tickCommandCarpetfied = false;
 
     /**
-     * Доступна ли команда {@code /player} (боты).
+     * Whether the {@code /player} command (bots) is available.
      *
-     * <p>По умолчанию выключена: без плагина ядро не должно менять набор доступных
-     * команд. Плагин ставит {@code true} при включении.
+     * <p>Off by default: without the plugin the core must not change the set of available
+     * commands. The plugin sets it to {@code true} when it enables.
      */
     public static volatile boolean playerCommandEnabled = false;
 

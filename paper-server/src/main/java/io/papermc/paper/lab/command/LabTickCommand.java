@@ -12,21 +12,21 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.ServerTickRateManager;
 
 /**
- * Дополнения к ванильному {@code /tick}.
+ * Additions to vanilla {@code /tick}.
  *
- * <p>В 26.2 команда уже есть в ваниле: {@code query}, {@code rate}, {@code step},
- * {@code sprint}, {@code freeze}, {@code unfreeze}. Не хватает только переключателя:
- * ванильные {@code freeze} и {@code unfreeze} задают состояние жёстко, поэтому на один
- * бинд их не повесить. Carpet использует именно переключатель.
+ * <p>In 26.2 the command already exists in vanilla: {@code query}, {@code rate},
+ * {@code step}, {@code sprint}, {@code freeze}, {@code unfreeze}. Only a toggle is
+ * missing: vanilla {@code freeze} and {@code unfreeze} set the state absolutely, so they
+ * cannot share a keybind. Carpet uses a toggle for exactly this reason.
  *
- * <p>Поэтому мы <b>дописываем</b> узлы в уже зарегистрированное дерево, не трогая
- * поведение ванильных. Своей команды {@code /labtick} больше нет: команды, которые есть
- * и в Carpet, должны называться так же, как там, иначе мышечная память не работает.
+ * <p>So we <b>append</b> nodes to the already registered tree without touching vanilla
+ * behaviour. There is no separate {@code /labtick} any more: commands that also exist in
+ * Carpet must carry Carpet's name, or muscle memory stops working.
  *
  * <pre>
  *
- * /tick toggle          заморозить / разморозить одной командой — для бинда
- * /tick warp &lt;время&gt;    алиас sprint (привычное имя из Carpet TIS)
+ * /tick toggle          freeze / unfreeze with one command — for a keybind
+ * /tick warp &lt;time&gt;     alias of sprint (the familiar name from Carpet TIS)
  * /tick warp stop
  * </pre>
  */
@@ -36,8 +36,8 @@ public final class LabTickCommand {
     }
 
     /**
-     * Вызывается <b>после</b> {@code TickCommand.register}: узел {@code tick} уже
-     * должен существовать.
+     * Called <b>after</b> {@code TickCommand.register}: the {@code tick} node must already
+     * exist.
      */
     public static void register(final CommandDispatcher<CommandSourceStack> dispatcher) {
         final CommandNode<CommandSourceStack> tick = dispatcher.getRoot().getChild("tick");
@@ -64,7 +64,7 @@ public final class LabTickCommand {
         final ServerTickRateManager manager = source.getServer().tickRateManager();
         final boolean freeze = !manager.isFrozen();
         if (freeze) {
-            // Порядок как в ванильном setFreeze: спринт и пошаговый режим сначала гасим.
+            // Same order as vanilla setFreeze: stop sprinting and stepping first.
             if (manager.isSprinting()) {
                 manager.stopSprinting();
             }

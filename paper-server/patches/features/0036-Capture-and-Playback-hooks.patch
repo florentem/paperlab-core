@@ -6,13 +6,15 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Минимальные хуки для интеграции с модом Capture & Playback.
+Minimal hooks for integrating with the Capture & Playback mod.
 
-Вся логика стримов, буферов и состояний вынесена в io.papermc.paper.lab.cplay.CPlayManager.
-В коде ваниллы остаются только необходимые точки перехвата:
-1. ServerLevel.tick (HEAD / RETURN): продвижение стримов воспроизведения и сброс захваченных событий;
-2. ServerLevel.runBlockEvents: синхронизация микротиков и обработка событий воспроизведения перед тиками блоков, захват событий поршней;
-3. SignalGetter.getControlInputSignal / getSignal: переопределение уровня редстоун-сигнала (15) для воспроизведения.
+All stream, buffer and state logic lives in io.papermc.paper.lab.cplay.CPlayManager.
+Only the necessary interception points remain in vanilla code:
+1. ServerLevel.tick (HEAD / RETURN): advancing playback streams and flushing captured events;
+2. ServerLevel.runBlockEvents: microtick synchronisation, handling playback events before
+   block ticks, and capturing piston events;
+3. SignalGetter.getControlInputSignal / getSignal: overriding the redstone signal level (15)
+   during playback.
 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
 index 59598bfb95c2f8a38efd92685c46a954dc76739d..1d6e4ee75875264210c9fbd80e45f000e535afbe 100644

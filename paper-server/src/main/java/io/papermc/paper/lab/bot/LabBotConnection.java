@@ -10,23 +10,23 @@ import net.minecraft.network.protocol.PacketFlow;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
- * Заглушка сетевого соединения для бота.
+ * A stub network connection for a bot.
  *
- * <p>Соединение нужно потому, что {@code PlayerList.placeNewPlayer} требует {@link Connection}
- * и {@code ServerPlayer} держит на него ссылку. Все исходящие пакеты отбрасываются: у бота нет
- * клиента, которому их отправлять.
+ * <p>The connection exists because {@code PlayerList.placeNewPlayer} requires a
+ * {@link Connection} and {@code ServerPlayer} holds a reference to one. Every outgoing
+ * packet is dropped: a bot has no client to send them to.
  *
- * <p><b>Почему нужен настоящий канал.</b> {@link EmbeddedChannel} ставится, чтобы
- * {@code Connection.isOpen()} возвращал {@code true}. Без этого часть механик, проверяющих
- * открытость соединения игрока, ведёт себя иначе — в частности телепортация эндер-жемчугом
- * к игроку. В Paper 26.2 поле {@code Connection.channel} уже {@code public}, поэтому
- * access transformer не требуется (проверено).
+ * <p><b>Why a real channel is needed.</b> An {@link EmbeddedChannel} is installed so that
+ * {@code Connection.isOpen()} returns {@code true}. Without it, mechanics that check
+ * whether a player's connection is open behave differently — ender pearl teleportation
+ * towards a player, in particular. In Paper 26.2 the {@code Connection.channel} field is
+ * already {@code public}, so no access transformer is needed (verified).
  *
- * <p>Это соединение <b>намеренно не регистрируется</b> в {@code ServerConnectionListener}:
- * оно не должно попадать в общий список соединений, участвовать в player-shuffle и
- * keepalive-логике. Как следствие, {@code Connection.tick()} для него не вызывается,
- * и {@code ServerPlayer.doTick()} приходится вызывать отдельно — это делает
- * {@link LabBotRegistry} в правильной фазе тика.
+ * <p>This connection is <b>deliberately not registered</b> with
+ * {@code ServerConnectionListener}: it must not appear in the shared connection list or
+ * take part in player-shuffle and keepalive logic. As a consequence
+ * {@code Connection.tick()} is never called for it, and {@code ServerPlayer.doTick()} has
+ * to be invoked separately — which {@link LabBotRegistry} does in the right tick phase.
  */
 public final class LabBotConnection extends Connection {
 
@@ -37,26 +37,26 @@ public final class LabBotConnection extends Connection {
 
     @Override
     public void setReadOnly() {
-        // Клиента нет — переводить соединение в read-only нечего.
+        // There is no client, so there is nothing to switch to read-only.
     }
 
     @Override
     public void send(final Packet<?> packet, final @Nullable ChannelFutureListener listener, final boolean flush) {
-        // Исходящие пакеты отбрасываются.
+        // Outgoing packets are dropped.
     }
 
     @Override
     public void handleDisconnection() {
-        // Разрыв обрабатывается через PlayerList.remove в LabBotRegistry.
+        // Disconnection is handled through PlayerList.remove in LabBotRegistry.
     }
 
     @Override
     public void setListenerForServerboundHandshake(final PacketListener listener) {
-        // Рукопожатия не происходит.
+        // No handshake takes place.
     }
 
     @Override
     public <T extends PacketListener> void setupInboundProtocol(final ProtocolInfo<T> protocolInfo, final T listener) {
-        // Входящего протокола нет.
+        // There is no inbound protocol.
     }
 }

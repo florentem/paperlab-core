@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Отслеживание этапов расчета движения сущности (move) для /log movement.
+ * Tracks the stages of an entity's movement calculation (move) for /log movement.
  */
 public final class LabMovementTracker {
 

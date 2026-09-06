@@ -35,45 +35,45 @@ import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
- * Реестр AFK-ботов и их тик в правильной фазе.
+ * Registry of AFK bots and their tick in the correct phase.
  *
- * <p>Все операции обязаны выполняться на главном потоке сервера, кроме явно
- * помеченного разрешения имени.
+ * <p>Every operation must run on the main server thread, except the name resolution
+ * explicitly marked as off-thread.
  */
 public final class LabBotRegistry {
 
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("PaperLab");
 
-    /** Имя → бот. Порядок вставки сохраняется, чтобы тик был детерминированным. */
+    /** Name to bot. Insertion order is kept so that ticking is deterministic. */
     private static final Map<String, LabBot> BOTS = new LinkedHashMap<>();
 
     /**
-     * Чем создавался бот — всё, что нужно, чтобы поднять его заново.
+     * How the bot was created — everything needed to bring it back.
      *
-     * <p>{@code skinName} и {@code inGameName} различаются, когда включён суффикс:
-     * скин берётся по первому, а UUID и место в таб-листе — по второму.
+     * <p>{@code skinName} and {@code inGameName} differ when a suffix is set: the skin is
+     * fetched for the former, while the UUID and tab-list slot come from the latter.
      */
     public record Spec(String skinName, String inGameName, ResourceKey<Level> dimension,
                        Vec3 pos, float yaw, float pitch, GameType gameMode, boolean flying) {
     }
 
-    /** Бот, которого ждём поднять: спецификация и сколько тиков осталось. */
+    /** A bot waiting to be respawned: its spec and how many ticks are left. */
     private record Pending(Spec spec, boolean autoRespawn, int ticksLeft) {
     }
 
     /**
-     * Пауза перед подъёмом. Секунда нужна не для красоты: смерть роняет предметы и
-     * запускает событие, и поднимать игрока в том же тике — верный способ поймать
-     * состояние, которого движок не ожидает.
+     * Delay before respawning. The second is not cosmetic: death drops items and fires an
+     * event, and respawning a player in the same tick is a reliable way to reach a state
+     * the engine does not expect.
      */
     private static final int RESPAWN_DELAY_TICKS = 20;
 
     private static final List<Pending> PENDING = new ArrayList<>();
 
     /**
-     * Имена, для которых профиль уже запрашивается. Резолв уходит в сеть и возвращается
-     * через несколько тиков; без этой пометки два быстрых {@code spawn} подряд создали бы
-     * двух ботов с одним именем.
+     * Names whose profile is already being resolved. Resolution goes over the network and
+     * comes back a few ticks later; without this marker two quick {@code spawn} calls
+     * would create two bots with the same name.
      */
     private static final Set<String> SPAWNING = new HashSet<>();
 
@@ -81,13 +81,13 @@ public final class LabBotRegistry {
     }
 
     /**
-     * Вызывается хуком из {@code MinecraftServer} сразу после {@code tickConnection()}.
+     * Called by a hook in {@code MinecraftServer} right after {@code tickConnection()}.
      *
-     * <p>Это единственное место, где боту вызывается {@code doTick()} — ровно та фаза
-     * ({@code tickChildren}: levels → <b>connection</b> → players) и ровно тот порядок
-     * относительно {@code tick()}, что и у живого игрока. Без хука бот получал бы
-     * {@code tick()} от уровня, но не {@code doTick()}, и, например, не обрабатывались бы
-     * его таймеры еды и подъёма.
+     * <p>This is the only place a bot gets {@code doTick()} — exactly the phase
+     * ({@code tickChildren}: levels -&gt; <b>connection</b> -&gt; players) and exactly the
+     * order relative to {@code tick()} that a live player sees. Without the hook a bot
+     * would get {@code tick()} from the level but not {@code doTick()}, so its hunger and
+     * respawn timers, among others, would never advance.
      */
     public static void tickConnectionPhase() {
         if (!io.papermc.paper.lab.rules.LabRuleState.playerCommandEnabled && BOTS.isEmpty() && PENDING.isEmpty()) {
@@ -97,13 +97,13 @@ public final class LabBotRegistry {
         if (BOTS.isEmpty()) {
             return;
         }
-        // Копия: doTick() может привести к удалению бота (смерть, кик).
+        // Copy: doTick() may remove the bot (death, kick).
         for (final LabBot bot : new ArrayList<>(BOTS.values())) {
-            // Мёртвый бот некому респавнить: у него нет клиента, который пришлёт
-            // ServerboundClientCommandPacket. Без этого он остаётся призраком в таб-листе,
-            // поэтому убираем его штатным путём.
+            // Nobody respawns a dead bot: it has no client to send
+            // ServerboundClientCommandPacket. Left alone it lingers as a ghost in the tab
+            // list, so we remove it through the normal path.
             if (bot.isDeadOrDying() || bot.isRemoved() || bot.hasDisconnected()) {
-                // Спецификацию снимаем до удаления: после remove бот уже ничего не помнит.
+                // Take the spec before removal: after remove the bot remembers nothing.
                 final Spec spec = bot.spec();
                 final boolean respawn = bot.autoRespawn() && bot.isDeadOrDying();
                 remove(bot.labName());
@@ -124,19 +124,19 @@ public final class LabBotRegistry {
     }
 
     /**
-     * Создаёт бота и регистрирует его как обычного игрока.
+     * Creates a bot and registers it as an ordinary player.
      *
-     * <p><b>Создание асинхронное.</b> Профиль, а с ним скин и плащ, резолвится через
-     * сервисы Mojang, поэтому бот появляется на несколько тиков позже возврата отсюда.
-     * Синхронно проверяется только то, что видно сразу; об остальном сообщает
-     * {@code feedback}, который вызывается уже на главном потоке.
+     * <p><b>Creation is asynchronous.</b> The profile — and with it the skin and cape — is
+     * resolved through Mojang services, so the bot appears a few ticks after this method
+     * returns. Only what is visible immediately is checked synchronously; everything else
+     * is reported through {@code feedback}, which is invoked on the main thread.
      *
-     * <p><b>Про настоящие имена.</b> Если имя принадлежит существующему игроку, бот
-     * получает его UUID и его скин. Плата: пока такой бот в игре, сам игрок с этим именем
-     * войти не сможет — сервер увидит дублирующийся вход. Поведение осознанное и такое же,
-     * как в Carpet.
+     * <p><b>On real names.</b> If the name belongs to an existing player, the bot takes
+     * their UUID and their skin. The price: while such a bot is online that player cannot
+     * log in — the server sees a duplicate login. The behaviour is deliberate and matches
+     * Carpet.
      *
-     * @return сообщение об ошибке, если она видна сразу, иначе {@code null}
+     * @return an error message if the problem is visible immediately, otherwise {@code null}
      */
     public static @Nullable String spawn(final MinecraftServer server,
                                          final String name,
@@ -151,9 +151,10 @@ public final class LabBotRegistry {
         if (name.isBlank()) {
             return "bot name cannot be empty";
         }
-        // Имя в игре — с суффиксом, скин — по имени без него. Разделение нужно, чтобы
-        // бот выглядел как нужный игрок, но не занимал его UUID: иначе сам игрок войти
-        // не сможет, сервер увидит дублирующийся вход.
+        // The in-game name carries the suffix, the skin is fetched for the name without
+        // it. The split is what lets the bot look like the intended player without taking
+        // their UUID — otherwise that player could not log in, the server would see a
+        // duplicate login.
         final String suffix = io.papermc.paper.lab.rules.LabRuleState.fakePlayerNameSuffix;
         final String skinName = name;
         final String inGameName = suffix.isEmpty() ? name : name + suffix;
@@ -175,8 +176,8 @@ public final class LabBotRegistry {
             .supplyAsync(() -> identity(server, skinName), Util.backgroundExecutor())
             .thenCompose(identity -> ResolvableProfile.createUnresolved(identity.id())
                 .resolveProfile(server.services().profileResolver())
-                // Профиля может не быть вовсе: имя выдумано или сервер без сети.
-                // Это не ошибка — бот просто останется без скина.
+                // There may be no profile at all: an invented name, or a server with no
+                // network. Not an error — the bot simply stays skinless.
                 .exceptionally(t -> identity.toUncompletedGameProfile())
                 .thenApply(resolved -> resolved.name().isEmpty()
                     ? identity.toUncompletedGameProfile() : resolved))
@@ -187,14 +188,14 @@ public final class LabBotRegistry {
                     feedback.accept(Component.literal("could not resolve profile: " + error));
                     return;
                 }
-                // Всё, что дальше, выполняется в колбэке future. Исключение отсюда
-                // CompletableFuture проглотит молча: ни в логе, ни в чате не будет
-                // ничего, а бот просто не появится. Один раз так и вышло — поэтому
-                // ловим сами и говорим вслух.
+                // Everything below runs inside a future callback. An exception here is
+                // swallowed silently by CompletableFuture: nothing in the log, nothing in
+                // chat, and the bot just never appears. That happened once — hence the
+                // explicit catch and the loud message.
                 try {
-                    // Скины лежат в свойствах профиля и от имени не зависят, а вот UUID
-                    // зависит: берём его от имени с суффиксом, иначе конфликт с живым
-                    // игроком никуда не денется.
+                    // Skins live in the profile properties and do not depend on the
+                    // name; the UUID does. We derive it from the suffixed name, otherwise
+                    // the clash with a live player remains.
                     final GameProfile inGame = withName(profile, inGameName, suffix);
                     final Spec spec = new Spec(skinName, inGameName, level.dimension(),
                         pos, yaw, pitch, gameMode, flying);
@@ -211,11 +212,12 @@ public final class LabBotRegistry {
     }
 
     /**
-     * Профиль под именем в игре: свойства (скин, плащ) сохраняются, имя и UUID берутся
-     * от имени с суффиксом.
+     * A profile under the in-game name: properties (skin, cape) are kept, while the name
+     * and UUID come from the suffixed name.
      *
-     * <p>Без суффикса профиль остаётся как есть — тогда бот и правда занимает UUID игрока,
-     * и это осознанный режим: имя правила пустое, значит пользователь этого и хотел.
+     * <p>With no suffix the profile is left as is — the bot then really does take the
+     * player's UUID, and that is a deliberate mode: an empty rule value means the user
+     * asked for exactly that.
      */
     private static GameProfile withName(final GameProfile profile,
                                         final String inGameName,
@@ -223,13 +225,13 @@ public final class LabBotRegistry {
         if (suffix.isEmpty()) {
             return profile;
         }
-        // Свойства (в том числе текстуры) переносим конструктором, а не putAll:
-        // карта свойств у GameProfile может быть неизменяемой, и putAll тогда бросает.
+        // Carry the properties (textures included) through the constructor rather than
+        // putAll: GameProfile's property map may be immutable, and putAll then throws.
         return new GameProfile(
             UUIDUtil.createOfflinePlayerUUID(inGameName), inGameName, profile.properties());
     }
 
-    /** Поднять ботов, у которых вышла пауза. */
+    /** Respawn the bots whose delay has elapsed. */
     private static void tickPending() {
         if (PENDING.isEmpty()) {
             return;
@@ -265,11 +267,11 @@ public final class LabBotRegistry {
     }
 
     /**
-     * Кто это по имени. Сначала спрашиваем кэш имён сервера: для существующего игрока он
-     * вернёт настоящий UUID, и бот получит его скин. Для выдуманного имени останется
-     * offline-UUID, как и раньше.
+     * Who this name belongs to. The server's name cache is asked first: for an existing
+     * player it returns the real UUID and the bot gets their skin. An invented name keeps
+     * an offline UUID, as before.
      *
-     * <p>Выполняется вне главного потока: разрешение имени ходит в сеть.
+     * <p>Runs off the main thread: name resolution goes over the network.
      */
     private static NameAndId identity(final MinecraftServer server, final String name) {
         try {
@@ -283,7 +285,7 @@ public final class LabBotRegistry {
         return new NameAndId(UUIDUtil.createOfflinePlayerUUID(name), name);
     }
 
-    /** Собственно создание. Только главный поток. */
+    /** The creation itself. Main thread only. */
     private static @Nullable String create(final MinecraftServer server,
                                            final GameProfile profile,
                                            final ServerLevel level,
@@ -308,37 +310,40 @@ public final class LabBotRegistry {
         server.getPlayerList().placeNewPlayer(
             connection, bot, CommonListenerCookie.createInitial(profile, false));
 
-        // Данные игрока нужно загружать явно. Обычный вход читает их до placeNewPlayer,
-        // а бота мы конструируем сами, минуя логин, поэтому без этого вызова инвентарь,
-        // здоровье и опыт не восстанавливаются между spawn и kill. Сохранение при
-        // PlayerList.remove при этом работает и раньше — терялась только загрузка.
+        // Player data has to be loaded explicitly. A normal login reads it before
+        // placeNewPlayer, but we construct the bot ourselves, bypassing login, so without
+        // this call inventory, health and experience are not restored between spawn and
+        // kill. Saving in PlayerList.remove worked all along — only loading was missing.
         loadSavedData(server, bot);
 
-        // Бот мог сохраниться верхом; иначе он появится на старом транспорте.
+        // The bot may have been saved while riding; otherwise it reappears on the old vehicle.
         bot.stopRiding();
 
-        // placeNewPlayer размещает игрока по сохранённым/спавновым координатам.
-        // Переносим на запрошенную точку уже после регистрации, чтобы chunk tickets
-        // и NearbyPlayers пересчитались обычным путём.
+        // placeNewPlayer puts the player at the saved or world-spawn coordinates. We move
+        // them to the requested point after registration so that chunk tickets and
+        // NearbyPlayers are recomputed through the usual path.
         bot.teleportTo(level, pos.x, pos.y, pos.z, java.util.Set.of(), yaw, pitch, true);
         bot.setYHeadRot(yaw);
         if (bot.getHealth() <= 0.0F) {
             bot.setHealth(bot.getMaxHealth());
         }
-        bot.gameMode.changeGameModeForPlayer(gameMode);
+        // Through ServerPlayer#setGameMode rather than gameMode.changeGameModeForPlayer:
+        // the latter bypasses PlayerGameModeChangeEvent, and Paper rightly catches that
+        // with scanJarForBadCalls. A bot is an ordinary player; plugins deserve to know.
+        bot.setGameMode(gameMode);
         bot.getAbilities().flying = flying;
         bot.onUpdateAbilities();
-        // Шаг по умолчанию: без этого бот может застревать на полублоках.
+        // Default step height: without it the bot can get stuck on slabs.
         final var stepHeight = bot.getAttribute(Attributes.STEP_HEIGHT);
         if (stepHeight != null) {
             stepHeight.setBaseValue(0.6D);
         }
-        // Все слои скина. У бота нет клиента, который прислал бы настройки модели,
-        // поэтому без этой строки не видно ни второго слоя, ни плаща.
+        // All skin layers. A bot has no client to send model settings, so without this
+        // line neither the second layer nor the cape shows.
         bot.getEntityData().set(Avatar.DATA_PLAYER_MODE_CUSTOMISATION, (byte) 0x7F);
 
-        // Явная рассылка поворота и позиции: клиенты, которым бота уже показали,
-        // иначе увидят его смотрящим в другую сторону до первого движения.
+        // Broadcast rotation and position explicitly: clients that were already shown the
+        // bot would otherwise see it facing the wrong way until it first moves.
         server.getPlayerList().broadcastAll(
             new ClientboundRotateHeadPacket(bot, (byte) (bot.yHeadRot * 256 / 360)), level.dimension());
         server.getPlayerList().broadcastAll(
@@ -352,8 +357,8 @@ public final class LabBotRegistry {
     }
 
     /**
-     * Читает сохранённые данные бота: инвентарь, здоровье, опыт, эндер-сундук,
-     * а также восстанавливает эндер-жемчуг и транспорт, как при обычном входе игрока.
+     * Reads the bot's saved data: inventory, health, experience, ender chest, and also
+     * restores ender pearls and vehicles, exactly as an ordinary player login does.
      */
     private static void loadSavedData(final MinecraftServer server, final LabBot bot) {
         try (final ProblemReporter.ScopedCollector reporter =
@@ -371,10 +376,10 @@ public final class LabBotRegistry {
     }
 
     /**
-     * Удаляет бота штатным путём {@code PlayerList.remove}: сохранение данных,
-     * снятие chunk tickets, выход из {@code NearbyPlayers}.
+     * Removes the bot through the normal {@code PlayerList.remove} path: data is saved,
+     * chunk tickets are released, {@code NearbyPlayers} is left.
      *
-     * @return {@code true}, если бот был найден и удалён
+     * @return {@code true} if the bot was found and removed
      */
     public static boolean remove(final String name) {
         final LabBot bot = BOTS.remove(name.toLowerCase(Locale.ROOT));
@@ -386,8 +391,8 @@ public final class LabBotRegistry {
     }
 
     /**
-     * Удаляет всех ботов. Обязательно при остановке сервера: оставленный бот продолжал бы
-     * держать чанки и занимать мобкап.
+     * Removes every bot. Mandatory on server shutdown: a bot left behind would keep
+     * holding chunks and taking mobcap.
      */
     public static int removeAll() {
         final List<String> names = new ArrayList<>(BOTS.keySet());

@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Микротайминг редстоуна и событий блоков (/log microtiming).
+ * Redstone and block-event microtiming (/log microtiming).
  */
 public final class LabMicroTiming {
 
@@ -60,7 +60,7 @@ public final class LabMicroTiming {
     private static final ThreadLocal<Integer> CALL_DEPTH = ThreadLocal.withInitial(() -> 0);
     private static final ThreadLocal<Phase> CURRENT_PHASE = ThreadLocal.withInitial(() -> Phase.NONE);
 
-    /** Маркеры красителей, установленные игроками: pos -> marker */
+    /** Dye markers placed by players: pos -> marker. */
     private static final Map<BlockPos, Marker> DYE_MARKERS = new ConcurrentHashMap<>();
 
     private LabMicroTiming() {
@@ -142,13 +142,13 @@ public final class LabMicroTiming {
         if (!hasListeners()) {
             return null;
         }
-        // 1. Проверяем маркер красителя на самом блоке
+        // 1. Check for a dye marker on the block itself.
         final Marker marker = DYE_MARKERS.get(pos);
         if (marker != null) {
             return marker.color();
         }
 
-        // Проверяем соседние блоки на наличие маркера типа END_ROD
+        // Check the neighbouring blocks for an END_ROD marker.
         for (final Direction dir : Direction.values()) {
             final Marker neighborMarker = DYE_MARKERS.get(pos.relative(dir));
             if (neighborMarker != null && neighborMarker.type() == MarkerType.END_ROD) {
@@ -156,7 +156,7 @@ public final class LabMicroTiming {
             }
         }
 
-        // 2. Проверяем маркировку шерстью как в Carpet-TIS-Addition
+        // 2. Check wool marking, as in Carpet-TIS-Addition.
         final BlockState state = level.getBlockState(pos);
         final Block block = state.getBlock();
 
@@ -199,7 +199,7 @@ public final class LabMicroTiming {
             }
         }
 
-        // Проверка End Rod, указывающего на блок, с шерстью позади
+        // Check for an end rod pointing at the block with wool behind it.
         for (final Direction dir : Direction.values()) {
             final BlockPos rodPos = pos.relative(dir);
             final BlockState rodState = level.getBlockState(rodPos);
