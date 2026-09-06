@@ -145,12 +145,11 @@ diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Le
 index 9286d9bcf3ec4069e77d3133f3d7bf29b2370c5a..475363cfbf5d5f5dc40493f176b0af218df2d7e0 100644
 --- a/net/minecraft/world/level/Level.java
 +++ b/net/minecraft/world/level/Level.java
-@@ -1106,6 +1106,8 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+@@ -1106,6 +1106,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
          }
  
          BlockState newState = this.getBlockState(pos);
 +        io.papermc.paper.lab.microtiming.LabMicroTiming.onBlockStateChange(this, pos, oldState, newState); // Paper Lab - /log microtiming
-+        io.papermc.paper.lab.cplay.CPlayManager.onBlockStateChanged(this, pos, oldState, newState); // Paper Lab - Capture and Playback: redstone sources
          /* // CraftBukkit
          if (newState == blockState) {
              if (oldState != newState) {

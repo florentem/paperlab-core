@@ -2,10 +2,12 @@ package io.papermc.paper.lab.zone;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
@@ -14,6 +16,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.material.Fluid;
@@ -33,6 +36,9 @@ public final class LabTickZones {
     /** worldIdentifier -> (lowercase zoneName -> LabTickZone) */
     private static final Map<String, Map<String, LabTickZone>> ZONES = new ConcurrentHashMap<>();
 
+    /** Spatial index: worldIdentifier -> (packedChunkPos -> List<LabTickZone>) */
+    private static final Map<String, Map<Long, List<LabTickZone>>> CHUNK_INDEX = new ConcurrentHashMap<>();
+
     /** player UUID -> lowercase zoneName */
     private static final Map<UUID, String> PLAYER_FOCUS = new ConcurrentHashMap<>();
 
@@ -48,7 +54,7 @@ public final class LabTickZones {
         updateActiveStatus();
     }
 
-    private static void updateActiveStatus() {
+    public static synchronized void updateActiveStatus() {
         if (!enabled) {
             hasActiveZones = false;
             return;
@@ -63,6 +69,21 @@ public final class LabTickZones {
         hasActiveZones = any;
     }
 
+    public static void rebuildChunkIndex(final String worldKey) {
+        final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
+        if (worldZones == null || worldZones.isEmpty()) {
+            CHUNK_INDEX.remove(worldKey);
+            return;
+        }
+        final Map<Long, List<LabTickZone>> map = new ConcurrentHashMap<>();
+        for (final LabTickZone zone : worldZones.values()) {
+            for (final long chunkPos : zone.chunkPositions()) {
+                map.computeIfAbsent(chunkPos, k -> new CopyOnWriteArrayList<>()).add(zone);
+            }
+        }
+        CHUNK_INDEX.put(worldKey, map);
+    }
+
     // --- Registry Operations ---
 
     public static LabTickZone createZone(final String worldKey, final String name, final UUID owner) {
@@ -70,6 +91,7 @@ public final class LabTickZones {
         final String key = name.toLowerCase(Locale.ROOT);
         final LabTickZone zone = new LabTickZone(name, worldKey, owner);
         worldZones.put(key, zone);
+        rebuildChunkIndex(worldKey);
         updateActiveStatus();
         return zone;
     }
@@ -82,6 +104,7 @@ public final class LabTickZones {
             if (removed != null) {
                 // Clear any player focus pointing to this zone
                 PLAYER_FOCUS.values().removeIf(z -> z.equalsIgnoreCase(name));
+                rebuildChunkIndex(worldKey);
                 updateActiveStatus();
                 return true;
             }
@@ -118,14 +141,18 @@ public final class LabTickZones {
             return null;
         }
         final String worldKey = level.dimension().identifier().toString();
-        final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
-        if (worldZones == null || worldZones.isEmpty()) {
+        final Map<Long, List<LabTickZone>> index = CHUNK_INDEX.get(worldKey);
+        if (index == null || index.isEmpty()) {
             return null;
         }
         final int cx = pos.getX() >> 4;
         final int cz = pos.getZ() >> 4;
-        for (final LabTickZone zone : worldZones.values()) {
-            if (zone.intersectsChunk(cx, cz) && zone.contains(pos)) {
+        final List<LabTickZone> zones = index.get(ChunkPos.pack(cx, cz));
+        if (zones == null || zones.isEmpty()) {
+            return null;
+        }
+        for (final LabTickZone zone : zones) {
+            if (zone.contains(pos)) {
                 return zone;
             }
         }
@@ -167,6 +194,27 @@ public final class LabTickZones {
             }
         }
         return null;
+    }
+
+    // --- Permission Checks ---
+
+    private static boolean checkZonePermission(final CommandSourceStack source, final LabTickZone zone) {
+        if (!source.isPlayer()) {
+            return true;
+        }
+        final org.bukkit.command.CommandSender sender = source.getBukkitSender();
+        if (!sender.hasPermission("paperlab.tick.zone")) {
+            source.sendFailure(Component.literal("Missing permission: paperlab.tick.zone"));
+            return false;
+        }
+        if (source.getEntity() instanceof final ServerPlayer player) {
+            final UUID uuid = player.getUUID();
+            if (!zone.isMember(uuid) && !sender.hasPermission("paperlab.tick.zone.admin")) {
+                source.sendFailure(Component.literal("You are not a member of zone '" + zone.name() + "'"));
+                return false;
+            }
+        }
+        return true;
     }
 
     // --- Hooks called from Level & ServerLevel ---
@@ -230,11 +278,29 @@ public final class LabTickZones {
         if (entity instanceof Player) {
             return false; // Players are never frozen
         }
+        for (final Entity passenger : entity.getIndirectPassengers()) {
+            if (passenger instanceof Player) {
+                return false; // Vehicles carrying players are never frozen
+            }
+        }
         final LabTickZone zone = getZoneAt(level, entity.blockPosition());
         if (zone == null) {
             return false;
         }
         return !zone.shouldTickNow();
+    }
+
+    public static void onLevelTickStart(final ServerLevel level) {
+        if (!enabled || !hasActiveZones) {
+            return;
+        }
+        final String worldKey = level.dimension().identifier().toString();
+        final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
+        if (worldZones != null && !worldZones.isEmpty()) {
+            for (final LabTickZone zone : worldZones.values()) {
+                zone.onWorldTickStart();
+            }
+        }
     }
 
     public static void onLevelTick(final ServerLevel level) {
@@ -245,7 +311,7 @@ public final class LabTickZones {
         final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
         if (worldZones != null && !worldZones.isEmpty()) {
             for (final LabTickZone zone : worldZones.values()) {
-                zone.onWorldTick(level);
+                zone.onWorldTickEnd(level);
             }
         }
     }
@@ -258,6 +324,9 @@ public final class LabTickZones {
             source.sendFailure(Component.literal("Focused zone not found"));
             return 0;
         }
+        if (!checkZonePermission(source, zone)) {
+            return 0;
+        }
         zone.setFrozen(freeze);
         source.sendSuccess(() -> Component.literal("[Zone " + zone.name() + "] " + (freeze ? "frozen" : "running"))
             .withStyle(freeze ? ChatFormatting.AQUA : ChatFormatting.GREEN), true);
@@ -268,6 +337,9 @@ public final class LabTickZones {
         final LabTickZone zone = getFocusedZone(source);
         if (zone == null) {
             source.sendFailure(Component.literal("Focused zone not found"));
+            return 0;
+        }
+        if (!checkZonePermission(source, zone)) {
             return 0;
         }
         final boolean freeze = !zone.isFrozen();
@@ -283,6 +355,9 @@ public final class LabTickZones {
             source.sendFailure(Component.literal("Focused zone not found"));
             return 0;
         }
+        if (!checkZonePermission(source, zone)) {
+            return 0;
+        }
         zone.setTickRate(rate);
         source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "[Zone %s] rate set to %.1f", zone.name(), rate))
             .withStyle(ChatFormatting.AQUA), true);
@@ -293,6 +368,9 @@ public final class LabTickZones {
         final LabTickZone zone = getFocusedZone(source);
         if (zone == null) {
             source.sendFailure(Component.literal("Focused zone not found"));
+            return 0;
+        }
+        if (!checkZonePermission(source, zone)) {
             return 0;
         }
         if (!zone.isFrozen()) {
@@ -311,6 +389,9 @@ public final class LabTickZones {
             source.sendFailure(Component.literal("Focused zone not found"));
             return 0;
         }
+        if (!checkZonePermission(source, zone)) {
+            return 0;
+        }
         zone.stopStepping();
         source.sendSuccess(() -> Component.literal("[Zone " + zone.name() + "] Stepping stopped")
             .withStyle(ChatFormatting.DARK_GRAY), false);
@@ -321,6 +402,10 @@ public final class LabTickZones {
         final LabTickZone zone = getFocusedZone(source);
         if (zone == null) {
             source.sendFailure(Component.literal("Focused zone not found"));
+            return 0;
+        }
+        if (source.isPlayer() && !source.getBukkitSender().hasPermission("paperlab.tick.zone")) {
+            source.sendFailure(Component.literal("Missing permission: paperlab.tick.zone"));
             return 0;
         }
         source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,

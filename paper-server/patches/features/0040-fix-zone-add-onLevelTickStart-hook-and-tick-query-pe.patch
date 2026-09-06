@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 20:07:19 +0600
+Subject: [PATCH] fix(zone): add onLevelTickStart hook and tick query
+ permission check
+
+
+diff --git a/net/minecraft/server/commands/TickCommand.java b/net/minecraft/server/commands/TickCommand.java
+index 3a964df5c32e5faa25168d508e202ef259b75e84..550688ead0d8cb244e544273ab590c6711a4fa56 100644
+--- a/net/minecraft/server/commands/TickCommand.java
++++ b/net/minecraft/server/commands/TickCommand.java
+@@ -90,6 +90,9 @@ public class TickCommand {
+         if (io.papermc.paper.lab.zone.LabTickZones.isFocused(source)) {
+             return io.papermc.paper.lab.zone.LabTickZones.handleQuery(source);
+         }
++        if (!checkGlobalPermission(source)) {
++            return 0;
++        }
+         ServerTickRateManager manager = getManager(source);
+         String busyTime = nanosToMilisString(source.getServer().getAverageTickTimeNanos());
+         float tickRate = manager.tickrate();
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index e8ae0936a67ea468f07ac22dbdbc7104fbab0f2a..1a54a89983c0a7fc0f1abf54c18448aed7ab7400 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -799,6 +799,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+     public void tick(final BooleanSupplier haveTime) {
+         io.papermc.paper.lab.cplay.CPlayManager.onLevelTickHead(this); // Paper Lab - Capture and Playback
++        io.papermc.paper.lab.zone.LabTickZones.onLevelTickStart(this); // Paper Lab - Tick Zones
+         ProfilerFiller profiler = Profiler.get();
+         this.handlingTick = true;
+         this.environmentAttributes().invalidateTickCache();

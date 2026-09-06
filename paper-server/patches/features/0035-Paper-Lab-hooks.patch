@@ -6,37 +6,37 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-The fork's single point of intrusion into the patch system, deliberately minimal.
+Единственная точка вмешательства форка в патч-систему, намеренно минимальная.
 
-Only what a plugin cannot do stays here. Commands, HUD, counters, the chunk map
-and mobcap reading all live in the PaperLab plugin.
+Здесь остаётся только то, чего нельзя сделать плагином. Команды, HUD,
+счётчики, карта чанков и чтение мобкапа живут в плагине PaperLab.
 
-1. Observer mode (io.papermc.paper.lab.ghost.LabGhost) - six sites:
-   - ChunkMap.updatePlayerMobTypeMap / updateFailurePlayerMobTypeMap - out of the mobcap census;
-   - ChunkMap.isChunkNearPlayer - does not widen the spawn area;
-   - ChunkMap.skipPlayer - takes no part in chunk loading;
-   - NaturalSpawner.spawnForChunk - does not consume the chunk budget;
-   - ActivationRange.activateEntities - does not wake mobs (EAR);
-   - LivingEntity.canBeSeenByAnyone - mobs do not target them.
-   Simulation distance and affectsSpawning are set from the API and need no patch.
+1. Режим наблюдателя (io.papermc.paper.lab.ghost.LabGhost) — шесть точек:
+   - ChunkMap.updatePlayerMobTypeMap / updateFailurePlayerMobTypeMap — вне переписи мобкапа;
+   - ChunkMap.isChunkNearPlayer — не расширяет область спавна;
+   - ChunkMap.skipPlayer — не участвует в загрузке чанков;
+   - NaturalSpawner.spawnForChunk — не режет бюджет чанка;
+   - ActivationRange.activateEntities — не будит мобов (EAR);
+   - LivingEntity.canBeSeenByAnyone — мобы не выбирают его целью.
+   Дистанция симуляции и affectsSpawning ставятся из API и патча не требуют.
 
-2. Spawn trace (io.papermc.paper.lab.spawn.SpawnTrace) - marks in NaturalSpawner:
-   hit the cap, attempt started, position rejected, cancelled by a plugin, spawned.
-   The engine publishes none of this outwards.
+2. Трасса спавна (io.papermc.paper.lab.spawn.SpawnTrace) — четыре метки в
+   NaturalSpawner: упёрлось в кап, попытка пошла, не подошла позиция,
+   отменил плагин, заспавнено. Наружу движок этого не публикует.
 
-3. Bots (io.papermc.paper.lab.bot) - two lines:
-   - MinecraftServer.tickChildren after tickConnection(): the bot's doTick in the
-     same phase and the same order relative to tick() as a live player
-     (levels -> connection -> players). A plugin cannot do this: its scheduler runs
-     at the start of tickChildren, before the level phase;
-   - Commands: registration of /player. The command uses vanilla argument types
-     (Vec3Argument, RotationArgument, DimensionArgument, GameModeArgument), so it
-     lives next to the bots rather than in the plugin.
+3. Боты (io.papermc.paper.lab.bot) — две строки:
+   - MinecraftServer.tickChildren после tickConnection(): doTick бота в той же
+     фазе и в том же порядке относительно tick(), что у живого игрока
+     (levels -> connection -> players). Плагин так не может: его планировщик
+     работает в начале tickChildren, до фазы уровней;
+   - Commands: регистрация /player. Команда пользуется ванильными типами
+     аргументов (Vec3Argument, RotationArgument, DimensionArgument,
+     GameModeArgument), поэтому живёт рядом с ботами, а не в плагине.
 
-4. PlayerList.remove - clear observer mode on quit.
+4. PlayerList.remove — снять режим наблюдателя при выходе.
 
-Trace collection switches on only while a subscription is active: the hot path is
-left with a single volatile field read.
+Сбор трассы включается только при активной подписке: в горячем пути остаётся
+чтение одного volatile поля.
 
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java b/ca/spottedleaf/moonrise/patches/chunk_system/player/RegionizedPlayerChunkLoader.java
 index 0743659c9f1122088adad4992b93649efc9ba873..66d8b64bf253b19a4251f01197643badcd6c8f86 100644
@@ -46,11 +46,11 @@ index 0743659c9f1122088adad4992b93649efc9ba873..66d8b64bf253b19a4251f01197643bad
              // take the allocations we actually used
              this.chunkGenerateTicketLimiter.returnUnused(maxGensThisTick - ratedGensThisTick);
  
-+            // Paper Lab - the observer makes no chunk tick.
-+            // A personal simulation distance of 0 is not enough: tickMap at radius 0 still
-+            // covers the chunk under the player, and entities there wake up on entry.
-+            // We clear the queue here: it is the only point where a chunk enters TICK, and
-+            // when the mode is turned off update() re-queues the chunks by itself.
++            // Paper Lab - наблюдатель не делает ticking ни одного чанка.
++            // Персональной дистанции симуляции 0 недостаточно: tickMap с радиусом 0
++            // покрывает чанк под самим игроком, и энтити в нём оживают, стоит туда войти.
++            // Гасим очередь здесь: это единственная точка, где чанк переходит в TICK,
++            // а при выключении режима update() ставит чанки обратно в очередь сам.
 +            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(this.player)) {
 +                this.tickingQueue.clear();
 +            }
@@ -66,7 +66,7 @@ index 829f7685904fd741e00403647ae76d32275c34a3..6354549da685134cbd67aa9e77d540eb
          maxRange = Math.min((world.spigotConfig.simulationDistance << 4) - 8, maxRange);
  
          for (final Player player : world.players()) {
-+            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(player)) { continue; } // Paper Lab - observer does not wake mobs
++            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(player)) { continue; } // Paper Lab - наблюдатель не будит мобов
              player.activatedTick = MinecraftServer.currentTick;
              if (world.spigotConfig.ignoreSpectatorActivation && player.isSpectator()) {
                  continue;
@@ -78,8 +78,8 @@ index c4396509584011a5bbc171510478e8e62ce44d94..0d292e49c343043070d1e9425b9f6457
          TellRawCommand.register(this.dispatcher, context);
          TestCommand.register(this.dispatcher, context);
          TickCommand.register(this.dispatcher);
-+        io.papermc.paper.lab.command.LabPlayerCommand.register(this.dispatcher); // Paper Lab - bots
-+        io.papermc.paper.lab.command.LabTickCommand.register(this.dispatcher); // Paper Lab - appends nodes to vanilla /tick
++        io.papermc.paper.lab.command.LabPlayerCommand.register(this.dispatcher); // Paper Lab - боты
++        io.papermc.paper.lab.command.LabTickCommand.register(this.dispatcher); // Paper Lab - дописывает узлы в ванильный /tick
          TimeCommand.register(this.dispatcher, context);
          TitleCommand.register(this.dispatcher, context);
          TriggerCommand.register(this.dispatcher);
@@ -91,7 +91,7 @@ index 05fcc3328436109b5aa4e2cef9bda799b4d3e1ff..da424f6c39570696535a901a3ca14a98
  
          profiler.popPush("connection");
          this.tickConnection();
-+        io.papermc.paper.lab.bot.LabBotRegistry.tickConnectionPhase(); // Paper Lab - bots: doTick in the connection phase, as for a live player
++        io.papermc.paper.lab.bot.LabBotRegistry.tickConnectionPhase(); // Paper Lab - боты: doTick в фазе соединений, как у живого игрока
          profiler.popPush("players");
          this.playerList.tick();
          profiler.popPush("debugSubscribers");
@@ -104,7 +104,7 @@ index 50d671bc5a8860883239590c030881043c791ca1..ba5ae7b0d8d9e8da2ca1f1496aa50ea7
              if (!strict) {
                  for (CloneCommands.CloneBlockInfo cloneInfo : reverse) {
 -                    toDimension.updateNeighboursOnBlockSet(cloneInfo.pos, cloneInfo.previousStateAtDestination);
-+                    if (io.papermc.paper.lab.rules.LabRuleState.fillUpdates) { toDimension.updateNeighboursOnBlockSet(cloneInfo.pos, cloneInfo.previousStateAtDestination); } // Paper Lab - fillUpdates rule
++                    if (io.papermc.paper.lab.rules.LabRuleState.fillUpdates) { toDimension.updateNeighboursOnBlockSet(cloneInfo.pos, cloneInfo.previousStateAtDestination); } // Paper Lab - правило fillUpdates
                  }
              }
  
@@ -117,7 +117,7 @@ index c8c8ee85004d965f77a00edb033e1863fc03833a..7bac0dd37d1c9ca1202884c8275d8aed
  
          for (UpdatedPosition pos : updatePositions) {
 -            level.updateNeighboursOnBlockSet(pos.pos, pos.oldState);
-+            if (io.papermc.paper.lab.rules.LabRuleState.fillUpdates) { level.updateNeighboursOnBlockSet(pos.pos, pos.oldState); } // Paper Lab - fillUpdates rule
++            if (io.papermc.paper.lab.rules.LabRuleState.fillUpdates) { level.updateNeighboursOnBlockSet(pos.pos, pos.oldState); } // Paper Lab - правило fillUpdates
          }
  
          if (count == 0) {
@@ -130,7 +130,7 @@ index 785112128803792e1ce821d3da37d6bac6cd3f44..c66bed07c927ef9b08de990656398e8b
  
          if (!strict) {
 -            level.updateNeighboursOnBlockSet(pos, oldState);
-+            if (io.papermc.paper.lab.rules.LabRuleState.fillUpdates) { level.updateNeighboursOnBlockSet(pos, oldState); } // Paper Lab - fillUpdates rule
++            if (io.papermc.paper.lab.rules.LabRuleState.fillUpdates) { level.updateNeighboursOnBlockSet(pos, oldState); } // Paper Lab - правило fillUpdates
          }
  
          source.sendSuccess(() -> Component.translatable("commands.setblock.success", pos.getX(), pos.getY(), pos.getZ()), true);
@@ -142,7 +142,7 @@ index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..b4c6c6220a992a516ef428b7d503830e
  
          final ServerPlayer[] backingSet = inRange.getRawDataUnchecked();
          for (int i = 0, len = inRange.size(); i < len; i++) {
-+            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[i])) { continue; } // Paper Lab - observer is outside the mobcap
++            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[i])) { continue; } // Paper Lab - наблюдатель вне мобкапа
              ++(backingSet[i].mobCounts[index]);
          }
      }
@@ -150,7 +150,7 @@ index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..b4c6c6220a992a516ef428b7d503830e
          }
          final ServerPlayer[] backingSet = inRange.getRawDataUnchecked();
          for (int i = 0, len = inRange.size(); i < len; i++) {
-+            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[i])) { continue; } // Paper Lab - observer is outside the mobcap
++            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[i])) { continue; } // Paper Lab - наблюдатель вне мобкапа
              ++(backingSet[i].mobBackoffCounts[idx]);
          }
      }
@@ -158,7 +158,7 @@ index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..b4c6c6220a992a516ef428b7d503830e
              if (event == null || event.isCancelled()) {
                  continue;
              }
-+            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(raw[i])) { continue; } // Paper Lab - observer does not widen the spawn area
++            if (io.papermc.paper.lab.ghost.LabGhost.isGhost(raw[i])) { continue; } // Paper Lab - наблюдатель не расширяет область спавна
              double blockRange = (double) ((event.getSpawnRadius() << 4) * (event.getSpawnRadius() << 4));
              if (chunkMap.playerIsCloseEnoughForSpawning(raw[i], chunkPos, blockRange)) {
                  // Paper end - PlayerNaturallySpawnCreaturesEvent
@@ -166,7 +166,7 @@ index 7f0df1c26f93d53b5925c564374f3e5fa6d966b3..b4c6c6220a992a516ef428b7d503830e
      }
  
      private boolean skipPlayer(final ServerPlayer player) {
-+        // Paper Lab - observer mode: takes no part in chunk loading
++        // Paper Lab - режим наблюдателя: не участвует в загрузке чанков
 +        if (io.papermc.paper.lab.ghost.LabGhost.isGhost(player)) {
 +            return true;
 +        }
@@ -182,7 +182,7 @@ index baec5d072b8f2d9379dba850b04e881e5267ca6b..50c9459cef959e9a34966d73bde51af3
      public net.kyori.adventure.text.@Nullable Component remove(final ServerPlayer player, final net.kyori.adventure.text.Component leaveMessage) {
          // Paper end - Fix kick event leave message not being sent
          ServerLevel level = player.level();
-+        io.papermc.paper.lab.ghost.LabGhost.onDisconnect(player); // Paper Lab - clear observer mode on quit
++        io.papermc.paper.lab.ghost.LabGhost.onDisconnect(player); // Paper Lab - снять режим наблюдателя при выходе
          player.awardStat(Stats.LEAVE_GAME);
          // CraftBukkit start - Quitting must be before we do final save of data, in case plugins need to modify it
          // See SPIGOT-5799, SPIGOT-6145
@@ -194,9 +194,9 @@ index ffbc6e6b88336e692c94586de8181a8c33b002f3..f0a9c1404875ecee376e13d2ca6ece9f
      }
  
      public boolean hasRequiredPermissions(final ServerPlayer player) {
-+        // Paper Lab - debug subscriptions by permission, not by operator status alone.
-+        // MiniHUD draws what these subscriptions carry (mob paths, neighbour updates,
-+        // redstone order, POI), and handing out full OP for that is too large a coin.
++        // Paper Lab - отладочные подписки по праву, а не только по статусу оператора.
++        // Данные этих подписок (пути мобов, обновления соседей, порядок редстоуна, POI)
++        // рисует MiniHUD, и выдавать ради них полный OP — слишком крупная монета.
 +        if (player.getBukkitEntity().hasPermission("paperlab.debugdata")) {
 +            return true;
 +        }
@@ -213,7 +213,7 @@ index 3a4da514c163e7565fc241835db52c464a5c4734..7323913b6518b70ed53613f49e70f5a0
  
      public boolean canBeSeenByAnyone() {
 +        if (io.papermc.paper.lab.ghost.LabGhost.isGhost(this)) {
-+            return false; // Paper Lab - observer mode: mobs do not target them
++            return false; // Paper Lab - режим наблюдателя: мобы его не выбирают целью
 +        }
          return !this.isSpectator() && this.isAlive();
      }
@@ -226,7 +226,7 @@ index e193cbed115663e9ca7a611837d5b8540dda03db..b40fe3ecfbf7f6d7b1bb402a60bb5b8e
                  if (inRange != null) {
                      final net.minecraft.server.level.ServerPlayer[] backingSet = inRange.getRawDataUnchecked();
                      for (int k = 0, len = inRange.size(); k < len; k++) {
-+                        if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[k])) { continue; } // Paper Lab - observer does not consume the budget
++                        if (io.papermc.paper.lab.ghost.LabGhost.isGhost(backingSet[k])) { continue; } // Paper Lab - наблюдатель не режет бюджет
                          minDiff = Math.min(limit - level.getChunkSource().chunkMap.getMobCountNear(backingSet[k], mobCategory), minDiff);
                      }
                  }
@@ -234,7 +234,7 @@ index e193cbed115663e9ca7a611837d5b8540dda03db..b40fe3ecfbf7f6d7b1bb402a60bb5b8e
              } else {
                  canSpawn = state.canSpawnForCategoryLocal(mobCategory, chunk.getPos());
              }
-+            // Paper Lab - spawn trace: where the attempt stopped
++            // Paper Lab - трасса спавна: где остановилась попытка
 +            if (io.papermc.paper.lab.spawn.SpawnTrace.enabled()) {
 +                io.papermc.paper.lab.spawn.SpawnTrace.record(level, mobCategory, canSpawn
 +                    ? io.papermc.paper.lab.spawn.SpawnTrace.Outcome.ATTEMPT
@@ -248,7 +248,7 @@ index e193cbed115663e9ca7a611837d5b8540dda03db..b40fe3ecfbf7f6d7b1bb402a60bb5b8e
                                  level.getChunkSource().chunkMap.updateFailurePlayerMobTypeMap(pos.getX() >> 4, pos.getZ() >> 4, mobCategory);
                              }
                              // Paper end - per player mob count backoff
-+                            // Paper Lab - spawn trace: tell a bad position from a plugin cancel
++                            // Paper Lab - трасса спавна: различаем позицию и отмену плагином
 +                            if (io.papermc.paper.lab.spawn.SpawnTrace.enabled()) {
 +                                if (doSpawning == PreSpawnStatus.FAIL) {
 +                                    io.papermc.paper.lab.spawn.SpawnTrace.record(level, mobCategory,
@@ -266,7 +266,7 @@ index e193cbed115663e9ca7a611837d5b8540dda03db..b40fe3ecfbf7f6d7b1bb402a60bb5b8e
                                      // CraftBukkit start
                                      // SPIGOT-7045: Give ocelot babies back their special spawn reason. Note: This is the only modification required as ocelots count as monsters which means they only spawn during normal chunk ticking and do not spawn during chunk generation as starter mobs.
                                      level.addFreshEntityWithPassengers(mob, (mob instanceof net.minecraft.world.entity.animal.feline.Ocelot && !((org.bukkit.entity.Ageable) mob.getBukkitEntity()).isAdult()) ? org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.OCELOT_BABY : org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.NATURAL);
-+                                    if (io.papermc.paper.lab.spawn.SpawnTrace.enabled()) { io.papermc.paper.lab.spawn.SpawnTrace.record(level, mobCategory, io.papermc.paper.lab.spawn.SpawnTrace.Outcome.SPAWNED); } // Paper Lab - spawn trace
++                                    if (io.papermc.paper.lab.spawn.SpawnTrace.enabled()) { io.papermc.paper.lab.spawn.SpawnTrace.record(level, mobCategory, io.papermc.paper.lab.spawn.SpawnTrace.Outcome.SPAWNED); } // Paper Lab - трасса спавна
                                      if (!mob.isRemoved()) {
                                          clusterSize++;
                                          groupSize++;

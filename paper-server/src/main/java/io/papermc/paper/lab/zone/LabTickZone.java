@@ -4,10 +4,11 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -28,11 +29,11 @@ public final class LabTickZone {
     private final String name;
     private final String worldKey;
     private UUID owner;
-    private final Set<UUID> members = new HashSet<>();
+    private final Set<UUID> members = ConcurrentHashMap.newKeySet();
 
     private final List<ZoneCuboid> boxes = new CopyOnWriteArrayList<>();
     private volatile ZoneCuboid bounds;
-    private final LongSet chunks = new LongOpenHashSet();
+    private volatile LongSet chunks = new LongOpenHashSet();
 
     private volatile boolean frozen = false;
     private volatile float tickRate = 20.0F;
@@ -40,8 +41,11 @@ public final class LabTickZone {
     private long zoneGameTime = 0L;
     private double timeAccumulator = 0.0D;
 
-    private final List<PendingBlock> pendingBlockTicks = new ArrayList<>();
-    private final List<PendingFluid> pendingFluidTicks = new ArrayList<>();
+    private volatile boolean tickingThisFrame = true;
+    private volatile int extraTicksThisFrame = 0;
+
+    private final Set<PendingBlock> pendingBlockTicks = new LinkedHashSet<>();
+    private final Set<PendingFluid> pendingFluidTicks = new LinkedHashSet<>();
 
     public LabTickZone(final String name, final String worldKey, final UUID owner) {
         this.name = name;
@@ -88,12 +92,14 @@ public final class LabTickZone {
     public synchronized void addBox(final ZoneCuboid box) {
         this.boxes.add(box);
         rebuildSpatialIndex();
+        LabTickZones.rebuildChunkIndex(this.worldKey);
     }
 
     public synchronized boolean removeBox(final int index) {
         if (index >= 0 && index < this.boxes.size()) {
             this.boxes.remove(index);
             rebuildSpatialIndex();
+            LabTickZones.rebuildChunkIndex(this.worldKey);
             return true;
         }
         return false;
@@ -102,12 +108,14 @@ public final class LabTickZone {
     public synchronized void clearBoxes() {
         this.boxes.clear();
         rebuildSpatialIndex();
+        LabTickZones.rebuildChunkIndex(this.worldKey);
     }
 
     private synchronized void rebuildSpatialIndex() {
-        this.chunks.clear();
+        final LongSet newChunks = new LongOpenHashSet();
         if (this.boxes.isEmpty()) {
             this.bounds = null;
+            this.chunks = newChunks;
             return;
         }
 
@@ -120,11 +128,16 @@ public final class LabTickZone {
             final int maxCz = box.maxZ() >> 4;
             for (int cx = minCx; cx <= maxCx; cx++) {
                 for (int cz = minCz; cz <= maxCz; cz++) {
-                    this.chunks.add(ChunkPos.pack(cx, cz));
+                    newChunks.add(ChunkPos.pack(cx, cz));
                 }
             }
         }
         this.bounds = union;
+        this.chunks = newChunks;
+    }
+
+    public LongSet chunkPositions() {
+        return this.chunks;
     }
 
     public boolean contains(final int x, final int y, final int z) {
@@ -156,6 +169,7 @@ public final class LabTickZone {
         this.frozen = frozen;
         if (frozen) {
             this.stepTicks = 0;
+            this.tickingThisFrame = false;
         }
     }
 
@@ -187,10 +201,7 @@ public final class LabTickZone {
      * Whether this zone is currently permitted to tick in the current world frame.
      */
     public boolean shouldTickNow() {
-        if (!this.frozen) {
-            return true;
-        }
-        return this.stepTicks > 0;
+        return this.tickingThisFrame;
     }
 
     public synchronized void recordPendingBlock(final BlockPos pos, final Block type) {
@@ -202,12 +213,9 @@ public final class LabTickZone {
     }
 
     /**
-     * Advance the zone by one zone tick and dispatch any deferred ticks.
+     * Drain pending block and fluid ticks.
      */
-    public synchronized void runZoneTick(final ServerLevel level) {
-        this.zoneGameTime++;
-
-        // Drain pending block ticks
+    public synchronized void drainPendingTicks(final ServerLevel level) {
         if (!this.pendingBlockTicks.isEmpty()) {
             final List<PendingBlock> toRun = new ArrayList<>(this.pendingBlockTicks);
             this.pendingBlockTicks.clear();
@@ -219,7 +227,6 @@ public final class LabTickZone {
             }
         }
 
-        // Drain pending fluid ticks
         if (!this.pendingFluidTicks.isEmpty()) {
             final List<PendingFluid> toRun = new ArrayList<>(this.pendingFluidTicks);
             this.pendingFluidTicks.clear();
@@ -234,26 +241,51 @@ public final class LabTickZone {
     }
 
     /**
-     * Called once per world tick from ServerLevel.tick().
+     * Called at the beginning of ServerLevel.tick() to determine if this zone ticks this frame.
      */
-    public void onWorldTick(final ServerLevel level) {
+    public void onWorldTickStart() {
+        if (this.frozen) {
+            this.tickingThisFrame = (this.stepTicks > 0);
+            this.extraTicksThisFrame = 0;
+            return;
+        }
+
+        if (Math.abs(this.tickRate - 20.0F) < 0.01F) {
+            this.tickingThisFrame = true;
+            this.extraTicksThisFrame = 0;
+            return;
+        }
+
+        this.timeAccumulator += (double) this.tickRate / 20.0D;
+        if (this.timeAccumulator >= 1.0D) {
+            this.tickingThisFrame = true;
+            this.extraTicksThisFrame = (int) this.timeAccumulator - 1;
+            this.timeAccumulator -= (this.extraTicksThisFrame + 1);
+        } else {
+            this.tickingThisFrame = false;
+            this.extraTicksThisFrame = 0;
+        }
+    }
+
+    /**
+     * Called at the end of ServerLevel.tick().
+     */
+    public void onWorldTickEnd(final ServerLevel level) {
         if (this.frozen) {
             if (this.stepTicks > 0) {
                 this.stepTicks--;
-                runZoneTick(level);
+                this.zoneGameTime++;
+                drainPendingTicks(level);
             }
             return;
         }
 
-        // Running: rate-based pacing
-        if (Math.abs(this.tickRate - 20.0F) < 0.01F) {
-            // Normal 20 TPS: exactly 1 zone tick per world tick
-            runZoneTick(level);
-        } else {
-            this.timeAccumulator += (double) this.tickRate / 20.0D;
-            while (this.timeAccumulator >= 1.0D) {
-                this.timeAccumulator -= 1.0D;
-                runZoneTick(level);
+        if (this.tickingThisFrame) {
+            this.zoneGameTime++;
+            drainPendingTicks(level);
+            for (int i = 0; i < this.extraTicksThisFrame; i++) {
+                this.zoneGameTime++;
+                drainPendingTicks(level);
             }
         }
     }
