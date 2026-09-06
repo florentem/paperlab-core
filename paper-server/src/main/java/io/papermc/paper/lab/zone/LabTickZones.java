@@ -206,6 +206,10 @@ public final class LabTickZones {
         return null;
     }
 
+    public static LabTickZone getZone(final String name) {
+        return findZone(name);
+    }
+
     public static Collection<LabTickZone> getZonesInWorld(final String worldKey) {
         final String normWorld = worldKey.toLowerCase(Locale.ROOT);
         final Map<String, LabTickZone> map = ZONES.get(normWorld);

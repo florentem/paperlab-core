@@ -49,6 +49,17 @@ public final class LabRuleState {
      */
     public static volatile boolean playerCommandEnabled = false;
 
+    /**
+     * Sets the TNT random explosion range to a fixed value.
+     * -1.0 for vanilla random behavior.
+     */
+    public static volatile double tntRandomRange = -1.0D;
+
+    /**
+     * If true, item entity drops have fixed zero momentum and centered position.
+     */
+    public static volatile boolean hardcodeItemDrops = false;
+
     private LabRuleState() {
     }
 }

@@ -291,6 +291,7 @@ public final class LabTickZone {
 
     public void runOneTick(final ServerLevel level) {
         LabTickZones.setCurrentTickingZone(this);
+        io.papermc.paper.lab.dump.ZoneDumpManager.onZoneSubTickStart(this);
         this.zoneGameTime++;
         final long currentTick = this.zoneGameTime;
         try {
@@ -304,6 +305,7 @@ public final class LabTickZone {
             level.runZoneEntities(this);
             level.runZoneBlockEntities(this);
         } finally {
+            io.papermc.paper.lab.dump.ZoneDumpManager.onZoneSubTickEnd(this);
             LabTickZones.setCurrentTickingZone(null);
         }
     }
