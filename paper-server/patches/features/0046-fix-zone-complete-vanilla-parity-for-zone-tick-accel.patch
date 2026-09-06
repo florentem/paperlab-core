@@ -1,0 +1,207 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 22:10:28 +0600
+Subject: [PATCH] fix(zone): complete vanilla parity for zone tick acceleration
+ and TNT dupers
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 2bac7b419ca9c4a241ad958c3e3399c88a609099..f61b0f07eca8a4ca3225a90649d3a23a68b9337d 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -904,7 +904,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+                         if (!entity.isRemoved()) {
+                             boolean isFrozen = tickRateManager.isEntityFrozen(entity) || io.papermc.paper.lab.zone.LabTickZones.isEntityFrozen(this, entity);
+                             entity.setLabFrozen(isFrozen);
+-                            if (!isFrozen) {
++                            if (!isFrozen && !io.papermc.paper.lab.zone.LabTickZones.isInActiveZone(this, entity)) {
+                                 profiler.push("checkDespawn");
+                                 entity.checkDespawn();
+                                 profiler.pop();
+@@ -1408,11 +1408,91 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+     }
+ 
+-    // Paper Lab - tick acceleration in zones
+-    public void runExtraZoneTicks(final io.papermc.paper.lab.zone.LabTickZone zone, final int extraTickIndex) {
+-        long currentVirtual = this.getGameTime() + extraTickIndex;
+-        this.blockTicks.drainAndRunZoneTicks(zone, currentVirtual, this::tickBlock);
+-        this.fluidTicks.drainAndRunZoneTicks(zone, currentVirtual, this::tickFluid);
++    // Paper Lab - tick zones execution
++    public void runZoneTicks(final io.papermc.paper.lab.zone.LabTickZone zone, final long maxTick) {
++        this.blockTicks.drainAndRunZoneTicks(zone, maxTick, this::tickBlock);
++        this.fluidTicks.drainAndRunZoneTicks(zone, maxTick, this::tickFluid);
++    }
++
++    public void runZoneBlockEvents(final io.papermc.paper.lab.zone.LabTickZone zone) {
++        if (this.blockEvents.isEmpty()) {
++            return;
++        }
++        int iterations = 0;
++        final int maxIterations = 1000;
++        while (!this.blockEvents.isEmpty() && iterations++ < maxIterations) {
++            this.blockEventsToReschedule.clear();
++            boolean processedAny = false;
++            while (!this.blockEvents.isEmpty()) {
++                BlockEventData eventData = this.blockEvents.removeFirst();
++                if (zone.contains(eventData.pos())) {
++                    processedAny = true;
++                    if (this.doBlockEvent(eventData)) {
++                        this.server
++                            .getPlayerList()
++                            .broadcast(
++                                null,
++                                eventData.pos().getX(),
++                                eventData.pos().getY(),
++                                eventData.pos().getZ(),
++                                64.0,
++                                this.dimension(),
++                                new ClientboundBlockEventPacket(eventData.pos(), eventData.block(), eventData.paramA(), eventData.paramB())
++                            );
++                    }
++                } else {
++                    this.blockEventsToReschedule.add(eventData);
++                }
++            }
++            this.blockEvents.addAll(this.blockEventsToReschedule);
++            if (!processedAny) {
++                break;
++            }
++        }
++    }
++
++    public void runZoneEntities(final io.papermc.paper.lab.zone.LabTickZone zone) {
++        for (final Entity entity : this.getAllEntities()) {
++            if (!entity.isRemoved() && !(entity instanceof net.minecraft.world.entity.player.Player) && !entity.isPassenger()) {
++                if (zone.contains(entity.blockPosition()) || zone.intersects(entity.getBoundingBox())) {
++                    this.guardEntityTick(this::tickNonPassenger, entity);
++                }
++            }
++        }
++    }
++
++    public void runZoneBlockEntities(final io.papermc.paper.lab.zone.LabTickZone zone) {
++        for (int bi = 0; bi < this.blockEntityTickers.size(); bi++) {
++            final net.minecraft.world.level.block.entity.TickingBlockEntity ticker = this.blockEntityTickers.get(bi);
++            if (!ticker.isRemoved() && zone.contains(ticker.getPos())) {
++                ticker.tick();
++            }
++        }
++    }
++
++    public void setHandlingTick(final boolean handlingTick) {
++        this.handlingTick = handlingTick;
++    }
++
++    @Override
++    public long getGameTime() {
++        final io.papermc.paper.lab.zone.LabTickZone current = io.papermc.paper.lab.zone.LabTickZones.getCurrentTickingZone();
++        if (current != null) {
++            return current.getGameTime(this);
++        }
++        return this.levelData.getGameTime();
++    }
++
++    @Override
++    public <T> net.minecraft.world.ticks.ScheduledTick<T> createTick(final BlockPos pos, final T type, final int tickDelay, final net.minecraft.world.ticks.TickPriority priority) {
++        long baseTime = io.papermc.paper.lab.zone.LabTickZones.getGameTimeFor(this, pos);
++        return new net.minecraft.world.ticks.ScheduledTick<>(type, pos, baseTime + tickDelay, priority, this.nextSubTickCount());
++    }
++
++    @Override
++    public <T> net.minecraft.world.ticks.ScheduledTick<T> createTick(final BlockPos pos, final T type, final int tickDelay) {
++        long baseTime = io.papermc.paper.lab.zone.LabTickZones.getGameTimeFor(this, pos);
++        return new net.minecraft.world.ticks.ScheduledTick<>(type, pos, baseTime + tickDelay, this.nextSubTickCount());
+     }
+ 
+     // Paper start - log detailed entity tick information
+diff --git a/net/minecraft/world/ticks/LevelTicks.java b/net/minecraft/world/ticks/LevelTicks.java
+index 15e0acf3744b678c0aad1b9937e18771a6d6985b..3776c8b798c407334af2638995102301950f9c16 100644
+--- a/net/minecraft/world/ticks/LevelTicks.java
++++ b/net/minecraft/world/ticks/LevelTicks.java
+@@ -192,9 +192,9 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+                 this.toRunThisTickSet.remove(entry);
+             }
+ 
+-            // Paper Lab - guard against ticking frozen zone blocks
+-            if (this.level != null && io.papermc.paper.lab.zone.LabTickZones.isBlockFrozen(this.level, entry.pos())) {
+-                this.schedule(new ScheduledTick<>(entry.type(), entry.pos(), entry.triggerTick() + 1L, entry.priority(), entry.subTickOrder()));
++            // Paper Lab - guard against ticking zone blocks in the world tick
++            if (this.level != null && io.papermc.paper.lab.zone.LabTickZones.isInActiveZone(this.level, entry.pos())) {
++                this.schedule(entry);
+                 continue;
+             }
+ 
+@@ -319,25 +319,56 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+ 
+     // Paper Lab - tick acceleration in zones
+     public void drainAndRunZoneTicks(final io.papermc.paper.lab.zone.LabTickZone zone, final long maxTick, final BiConsumer<BlockPos, T> output) {
+-        for (long chunkPos : zone.chunkPositions()) {
+-            LevelChunkTicks<T> container = this.allContainers.get(chunkPos);
+-            if (container == null) {
+-                continue;
+-            }
+-            List<ScheduledTick<T>> toRun = null;
+-            for (ScheduledTick<T> tick : container.getAll().toList()) {
+-                if (tick.triggerTick() <= maxTick && zone.contains(tick.pos())) {
+-                    if (toRun == null) {
+-                        toRun = new ArrayList<>();
++        int processed = 0;
++        final int limit = 10000;
++        while (processed < limit) {
++            final List<ScheduledTick<T>> toRun = new ArrayList<>();
++            for (final long chunkPos : zone.chunkPositions()) {
++                final LevelChunkTicks<T> container = this.allContainers.get(chunkPos);
++                if (container != null) {
++                    List<ScheduledTick<T>> chunkTicks = null;
++                    for (final ScheduledTick<T> tick : container.getAll().toList()) {
++                        if (tick.triggerTick() <= maxTick && zone.contains(tick.pos())) {
++                            if (chunkTicks == null) {
++                                chunkTicks = new ArrayList<>();
++                            }
++                            chunkTicks.add(tick);
++                        }
++                    }
++                    if (chunkTicks != null) {
++                        container.removeIf(chunkTicks::contains);
++                        if (container.peek() == null) {
++                            this.nextTickForContainer.remove(chunkPos);
++                        } else {
++                            this.nextTickForContainer.put(chunkPos, container.peek().triggerTick());
++                        }
++                        toRun.addAll(chunkTicks);
+                     }
+-                    toRun.add(tick);
+                 }
+             }
+-            if (toRun != null) {
+-                container.removeIf(toRun::contains);
+-                toRun.sort(ScheduledTick.DRAIN_ORDER);
+-                for (ScheduledTick<T> tick : toRun) {
+-                    output.accept(tick.pos(), tick.type());
++            if (toRun.isEmpty()) {
++                break;
++            }
++            toRun.sort(ScheduledTick.DRAIN_ORDER);
++            for (final ScheduledTick<T> tick : toRun) {
++                output.accept(tick.pos(), tick.type());
++                processed++;
++            }
++        }
++    }
++
++    public void shiftZoneTicks(final io.papermc.paper.lab.zone.LabTickZone zone, final long delta) {
++        for (final long chunkPos : zone.chunkPositions()) {
++            final LevelChunkTicks<T> container = this.allContainers.get(chunkPos);
++            if (container != null) {
++                final boolean changed = container.postponeTicks(zone::contains, delta);
++                if (changed) {
++                    final ScheduledTick<T> next = container.peek();
++                    if (next == null) {
++                        this.nextTickForContainer.remove(chunkPos);
++                    } else {
++                        this.nextTickForContainer.put(chunkPos, next.triggerTick());
++                    }
+                 }
+             }
+         }

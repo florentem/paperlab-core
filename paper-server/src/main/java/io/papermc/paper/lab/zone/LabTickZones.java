@@ -48,6 +48,17 @@ public final class LabTickZones {
     /** Active zone targeted by sprint/warp, or null if global sprint */
     private static volatile String activeSprintZone = null;
 
+    /** Zone currently executing runOneTick on the main tick thread */
+    private static volatile LabTickZone currentTickingZone = null;
+
+    public static LabTickZone getCurrentTickingZone() {
+        return currentTickingZone;
+    }
+
+    public static void setCurrentTickingZone(final LabTickZone zone) {
+        currentTickingZone = zone;
+    }
+
     private LabTickZones() {
     }
 
@@ -150,6 +161,19 @@ public final class LabTickZones {
                 PLAYER_FOCUS.values().removeIf(z -> z.equalsIgnoreCase(name));
                 rebuildChunkIndex(normWorld);
                 updateActiveStatus();
+                final net.minecraft.server.MinecraftServer server = net.minecraft.server.MinecraftServer.getServer();
+                if (server != null) {
+                    for (final ServerLevel sl : server.getAllLevels()) {
+                        if (resolveWorldKey(sl).equalsIgnoreCase(normWorld)) {
+                            final long offset = sl.getGameTime() - removed.getGameTime(sl);
+                            if (offset != 0L) {
+                                sl.getBlockTicks().shiftZoneTicks(removed, offset);
+                                sl.getFluidTicks().shiftZoneTicks(removed, offset);
+                            }
+                            break;
+                        }
+                    }
+                }
                 return true;
             }
         }
@@ -265,6 +289,28 @@ public final class LabTickZones {
 
     // --- Hooks called from Level & ServerLevel ---
 
+    public static boolean isInActiveZone(final Level level, final BlockPos pos) {
+        if (!enabled || !hasActiveZones || level == null || pos == null) {
+            return false;
+        }
+        return getZoneAt(level, pos) != null;
+    }
+
+    public static boolean isInActiveZone(final Level level, final Entity entity) {
+        if (!enabled || !hasActiveZones || level == null || entity == null) {
+            return false;
+        }
+        if (entity instanceof Player) {
+            return false;
+        }
+        for (final Entity passenger : entity.getIndirectPassengers()) {
+            if (passenger instanceof Player) {
+                return false;
+            }
+        }
+        return getZoneAt(level, entity.blockPosition()) != null || getZoneIntersecting(level, entity.getBoundingBox()) != null;
+    }
+
     public static boolean shouldTickBlock(final ServerLevel level, final BlockPos pos, final Block type) {
         return !isBlockFrozen(level, pos);
     }
@@ -274,25 +320,25 @@ public final class LabTickZones {
     }
 
     public static boolean shouldRunBlockEvent(final ServerLevel level, final BlockPos pos, final Object eventData) {
-        if (!enabled || !hasActiveZones) {
+        if (!enabled || !hasActiveZones || level == null || pos == null) {
             return true;
         }
         final LabTickZone zone = getZoneAt(level, pos);
         if (zone == null) {
             return true;
         }
-        return zone.shouldTickNow();
+        return currentTickingZone == zone;
     }
 
     public static boolean shouldTickBlockEntity(final Level level, final BlockPos pos) {
-        if (!enabled || !hasActiveZones) {
+        if (!enabled || !hasActiveZones || level == null || pos == null) {
             return true;
         }
         final LabTickZone zone = getZoneAt(level, pos);
         if (zone == null) {
             return true;
         }
-        return zone.shouldTickNow();
+        return currentTickingZone == zone;
     }
 
     public static boolean isBlockFrozen(final Level level, final BlockPos pos) {
@@ -303,7 +349,10 @@ public final class LabTickZones {
         if (zone == null) {
             return false;
         }
-        return !zone.shouldTickNow();
+        if (currentTickingZone == zone) {
+            return false;
+        }
+        return zone.isFrozen();
     }
 
     public static LabTickZone getZoneIntersecting(final Level level, final net.minecraft.world.phys.AABB aabb) {
@@ -335,7 +384,7 @@ public final class LabTickZones {
     }
 
     public static boolean isEntityFrozen(final Level level, final Entity entity) {
-        if (!enabled || !hasActiveZones) {
+        if (!enabled || !hasActiveZones || level == null || entity == null) {
             return false;
         }
         if (entity instanceof Player) {
@@ -353,7 +402,25 @@ public final class LabTickZones {
         if (zone == null) {
             return false;
         }
-        return !zone.shouldTickNow();
+        if (currentTickingZone == zone) {
+            return false;
+        }
+        return zone.isFrozen();
+    }
+
+    public static long getGameTimeFor(final Level level, final BlockPos pos) {
+        if (!enabled || !hasActiveZones || level == null || pos == null) {
+            return level != null ? level.getGameTime() : 0L;
+        }
+        final LabTickZone current = currentTickingZone;
+        if (current != null && current.contains(pos)) {
+            return current.getGameTime((ServerLevel) level);
+        }
+        final LabTickZone zone = getZoneAt(level, pos);
+        if (zone != null) {
+            return zone.getGameTime((ServerLevel) level);
+        }
+        return level.getGameTime();
     }
 
     public static boolean hasSkippingZones(final Level level) {

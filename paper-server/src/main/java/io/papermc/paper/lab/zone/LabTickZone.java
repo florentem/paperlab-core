@@ -29,11 +29,10 @@ public final class LabTickZone {
     private volatile boolean frozen = false;
     private volatile float tickRate = 20.0F;
     private volatile int stepTicks = 0;
-    private long zoneGameTime = 0L;
+    private long zoneGameTime = -1L;
     private double timeAccumulator = 0.0D;
 
-    private volatile boolean tickingThisFrame = true;
-    private volatile int extraTicksThisFrame = 0;
+    private volatile int ticksToRunThisFrame = 0;
 
     public LabTickZone(final String name, final String worldKey, final UUID owner) {
         this.name = name;
@@ -170,7 +169,7 @@ public final class LabTickZone {
         this.frozen = frozen;
         if (frozen) {
             this.stepTicks = 0;
-            this.tickingThisFrame = false;
+            this.ticksToRunThisFrame = 0;
         }
     }
 
@@ -198,11 +197,18 @@ public final class LabTickZone {
         return this.zoneGameTime;
     }
 
+    public long getGameTime(final ServerLevel level) {
+        if (this.zoneGameTime < 0) {
+            this.zoneGameTime = level.getGameTime();
+        }
+        return this.zoneGameTime;
+    }
+
     /**
      * Whether this zone is currently permitted to tick in the current world frame.
      */
     public boolean shouldTickNow() {
-        return this.tickingThisFrame;
+        return this.ticksToRunThisFrame > 0;
     }
 
     /**
@@ -210,65 +216,60 @@ public final class LabTickZone {
      */
     public void onWorldTickStart(final boolean isSprinting) {
         if (this.frozen) {
-            this.tickingThisFrame = (this.stepTicks > 0) || isSprinting;
-            this.extraTicksThisFrame = 0;
+            if (this.stepTicks > 0) {
+                this.ticksToRunThisFrame = 1;
+                this.stepTicks--;
+            } else if (isSprinting) {
+                this.ticksToRunThisFrame = 1;
+            } else {
+                this.ticksToRunThisFrame = 0;
+            }
             return;
         }
 
         if (isSprinting) {
-            this.tickingThisFrame = true;
-            this.extraTicksThisFrame = 0;
+            this.ticksToRunThisFrame = 1;
             return;
         }
 
         if (Math.abs(this.tickRate - 20.0F) < 0.01F) {
-            this.tickingThisFrame = true;
-            this.extraTicksThisFrame = 0;
+            this.ticksToRunThisFrame = 1;
             return;
         }
 
         this.timeAccumulator += (double) this.tickRate / 20.0D;
-        if (this.timeAccumulator >= 1.0D) {
-            this.tickingThisFrame = true;
-            this.extraTicksThisFrame = (int) this.timeAccumulator - 1;
-            this.timeAccumulator -= (this.extraTicksThisFrame + 1);
-        } else {
-            this.tickingThisFrame = false;
-            this.extraTicksThisFrame = 0;
-        }
+        this.ticksToRunThisFrame = (int) this.timeAccumulator;
+        this.timeAccumulator -= (double) this.ticksToRunThisFrame;
     }
 
     /**
      * Called at the end of ServerLevel.tick().
      */
     public void onWorldTickEnd(final ServerLevel level) {
-        if (this.frozen) {
-            if (this.stepTicks > 0) {
-                this.stepTicks--;
-                this.zoneGameTime++;
-            } else if (this.tickingThisFrame) {
-                this.zoneGameTime++;
-            }
-            return;
+        if (this.zoneGameTime < 0) {
+            this.zoneGameTime = level.getGameTime();
         }
+        for (int i = 0; i < this.ticksToRunThisFrame; i++) {
+            this.runOneTick(level);
+        }
+    }
 
-        if (this.tickingThisFrame) {
-            this.zoneGameTime++;
-            for (int i = 0; i < this.extraTicksThisFrame; i++) {
-                this.zoneGameTime++;
-                level.runExtraZoneTicks(this, i + 1);
-                for (int bi = 0; bi < level.blockEntityTickers.size(); bi++) {
-                    final net.minecraft.world.level.block.entity.TickingBlockEntity ticker = level.blockEntityTickers.get(bi);
-                    if (!ticker.isRemoved() && this.contains(ticker.getPos())) {
-                        ticker.tick();
-                    }
-                }
-                for (final net.minecraft.world.entity.Entity entity : level.getAllEntities()) {
-                    if (!(entity instanceof net.minecraft.world.entity.player.Player) && !entity.isPassenger() && this.contains(entity.blockPosition())) {
-                        level.tickNonPassenger(entity);
-                    }
-                }
+    public void runOneTick(final ServerLevel level) {
+        LabTickZones.setCurrentTickingZone(this);
+        this.zoneGameTime++;
+        final long currentTick = this.zoneGameTime;
+        try {
+            level.setHandlingTick(true);
+            try {
+                level.runZoneTicks(this, currentTick);
+                level.runZoneBlockEvents(this);
+            } finally {
+                level.setHandlingTick(false);
             }
+            level.runZoneEntities(this);
+            level.runZoneBlockEntities(this);
+        } finally {
+            LabTickZones.setCurrentTickingZone(null);
         }
     }
 }
