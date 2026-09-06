@@ -67,8 +67,26 @@ public final class LabTickZones {
     }
 
     public static void setEnabled(final boolean value) {
-        enabled = value;
-        updateActiveStatus();
+        if (!value) {
+            disableAll();
+        } else {
+            enabled = true;
+            updateActiveStatus();
+        }
+    }
+
+    public static void disableAll() {
+        for (final Map<String, LabTickZone> map : ZONES.values()) {
+            for (final LabTickZone zone : map.values()) {
+                zone.realignTicksToWorldTime();
+            }
+        }
+        enabled = false;
+        hasActiveZones = false;
+        ZONES.clear();
+        CHUNK_INDEX.clear();
+        PLAYER_FOCUS.clear();
+        activeSprintZone = null;
     }
 
     public static synchronized void updateActiveStatus() {
@@ -161,19 +179,7 @@ public final class LabTickZones {
                 PLAYER_FOCUS.values().removeIf(z -> z.equalsIgnoreCase(name));
                 rebuildChunkIndex(normWorld);
                 updateActiveStatus();
-                final net.minecraft.server.MinecraftServer server = net.minecraft.server.MinecraftServer.getServer();
-                if (server != null) {
-                    for (final ServerLevel sl : server.getAllLevels()) {
-                        if (resolveWorldKey(sl).equalsIgnoreCase(normWorld)) {
-                            final long offset = sl.getGameTime() - removed.getGameTime(sl);
-                            if (offset != 0L) {
-                                sl.getBlockTicks().shiftZoneTicks(removed, offset);
-                                sl.getFluidTicks().shiftZoneTicks(removed, offset);
-                            }
-                            break;
-                        }
-                    }
-                }
+                removed.realignTicksToWorldTime();
                 return true;
             }
         }
@@ -344,10 +350,10 @@ public final class LabTickZones {
         if (currentTickingZone == zone) {
             return true;
         }
-        if (zone.isFrozen()) {
+        if (zone.isAccelerated()) {
             return false;
         }
-        return !zone.isAccelerated();
+        return zone.shouldTickNow();
     }
 
     public static boolean shouldTickBlockEntity(final Level level, final BlockPos pos) {
@@ -361,10 +367,10 @@ public final class LabTickZones {
         if (currentTickingZone == zone) {
             return true;
         }
-        if (zone.isFrozen()) {
+        if (zone.isAccelerated()) {
             return false;
         }
-        return !zone.isAccelerated();
+        return zone.shouldTickNow();
     }
 
     public static boolean isBlockFrozen(final Level level, final BlockPos pos) {
@@ -378,7 +384,10 @@ public final class LabTickZones {
         if (currentTickingZone == zone) {
             return false;
         }
-        return zone.isFrozen();
+        if (zone.isAccelerated()) {
+            return false;
+        }
+        return !zone.shouldTickNow();
     }
 
     public static LabTickZone getZoneIntersecting(final Level level, final net.minecraft.world.phys.AABB aabb) {
@@ -431,7 +440,10 @@ public final class LabTickZones {
         if (currentTickingZone == zone) {
             return false;
         }
-        return zone.isFrozen();
+        if (zone.isAccelerated()) {
+            return false;
+        }
+        return !zone.shouldTickNow();
     }
 
     public static long getGameTimeFor(final Level level, final BlockPos pos) {
@@ -496,7 +508,7 @@ public final class LabTickZones {
                 activeSprintZone = null;
             }
             for (final LabTickZone zone : worldZones.values()) {
-                final boolean zoneSprinting = serverSprinting && (activeSprintZone == null || activeSprintZone.equalsIgnoreCase(zone.name()));
+                final boolean zoneSprinting = serverSprinting && (activeSprintZone == null ? !zone.isFrozen() : activeSprintZone.equalsIgnoreCase(zone.name()));
                 zone.onWorldTickStart(zoneSprinting);
             }
         }
