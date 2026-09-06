@@ -60,6 +60,12 @@ public final class LabRuleState {
      */
     public static volatile boolean hardcodeItemDrops = false;
 
+    /**
+     * Whether block updates, neighbour updates, and shape updates occur.
+     * When false, all neighbour updates and physics updates are suppressed.
+     */
+    public static volatile boolean blockUpdates = true;
+
     private LabRuleState() {
     }
 }

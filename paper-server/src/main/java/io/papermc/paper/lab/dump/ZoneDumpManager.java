@@ -116,7 +116,7 @@ public final class ZoneDumpManager {
             this.eventsThisTick = 0;
             this.subTickIndex = 0;
             this.currentPhase = "START";
-            this.writer.println(String.format(Locale.ROOT, "=== TICK %d | Dim: %s ===", level.getGameTime(), LabTickZones.resolveWorldKey(level)));
+            this.writer.println(String.format(Locale.ROOT, "=== TICK T+%d | Dim: %s ===", this.ticksRecorded, LabTickZones.resolveWorldKey(level)));
         }
 
         public synchronized void onTickEnd(final ServerLevel level) {
@@ -132,8 +132,8 @@ public final class ZoneDumpManager {
             this.currentZone = zone;
             this.subTickIndex++;
             this.currentPhase = "ZONE_SUBTICK";
-            this.writer.println(String.format(Locale.ROOT, "--- SUB-TICK %d (Zone: %s, ZoneTick: %d) ---",
-                this.subTickIndex, zone.name(), zone.zoneGameTime()));
+            this.writer.println(String.format(Locale.ROOT, "--- SUB-TICK %d (Zone: %s) ---",
+                this.subTickIndex, zone.name()));
         }
 
         public synchronized void onZoneSubTickEnd(final LabTickZone zone) {
@@ -336,15 +336,17 @@ public final class ZoneDumpManager {
 
     public static void onEntitySpawn(final Level level, final Entity entity) {
         if (!active) return;
+        if (entity instanceof net.minecraft.world.entity.player.Player) return;
         final Session session = currentSession;
         if (session != null && session.matches(level, entity.blockPosition())) {
             session.logEvent("ENTITY_SPAWN", entity.blockPosition(),
-                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()) + " id=" + entity.getId() + " pos=" + entity.position());
+                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()) + " pos=" + entity.position());
         }
     }
 
     public static void onEntityTick(final Level level, final Entity entity) {
         if (!active) return;
+        if (entity instanceof net.minecraft.world.entity.player.Player) return;
         final Session session = currentSession;
         if (session != null && session.matches(level, entity.blockPosition())) {
             String details = "";
@@ -352,9 +354,11 @@ public final class ZoneDumpManager {
                 details = " fuse=" + tnt.getFuse() + " vel=" + tnt.getDeltaMovement();
             } else if (entity instanceof FallingBlockEntity fb) {
                 details = " block=" + fb.getBlockState() + " time=" + fb.time;
+            } else if (entity instanceof net.minecraft.world.entity.item.ItemEntity item) {
+                details = " item=" + BuiltInRegistries.ITEM.getKey(item.getItem().getItem()) + " vel=" + item.getDeltaMovement();
             }
             session.logEvent("ENTITY_TICK", entity.blockPosition(),
-                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()) + " id=" + entity.getId() + " pos=" + entity.position() + details);
+                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()) + " pos=" + entity.position() + details);
         }
     }
 

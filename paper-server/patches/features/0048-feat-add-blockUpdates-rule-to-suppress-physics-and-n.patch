@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 23:36:32 +0600
+Subject: [PATCH] feat: add blockUpdates rule to suppress physics and neighbor
+ updates
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index a8bc86cd894f8be154aa1a3ac3e1b7610137ced7..0ac4bb1bd7caacd22e3872cf19cfa5ac7964ab1f 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -2052,13 +2052,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             return;
+         }
+         // CraftBukkit end
+-        if (captureBlockStates) { return; } // Paper - Cancel all physics during placement
++        if (captureBlockStates || !io.papermc.paper.lab.rules.LabRuleState.blockUpdates) { return; } // Paper - Cancel all physics during placement // Paper Lab - blockUpdates
+         this.updateNeighborsAt(pos, sourceBlock, ExperimentalRedstoneUtils.initialOrientation(this, null, null));
+     }
+ 
+     @Override
+     public void updateNeighborsAt(final BlockPos pos, final Block sourceBlock, final @Nullable Orientation orientation) {
+-        if (captureBlockStates) { return; } // Paper - Cancel all physics during placement
++        if (captureBlockStates || !io.papermc.paper.lab.rules.LabRuleState.blockUpdates) { return; } // Paper - Cancel all physics during placement // Paper Lab - blockUpdates
+         this.neighborUpdater.updateNeighborsAtExceptFromFacing(pos, sourceBlock, null, orientation);
+     }
+ 
+@@ -2066,11 +2066,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     public void updateNeighborsAtExceptFromFacing(
+         final BlockPos pos, final Block blockObject, final Direction skipDirection, final @Nullable Orientation orientation
+     ) {
++        if (!io.papermc.paper.lab.rules.LabRuleState.blockUpdates) { return; } // Paper Lab - blockUpdates
+         this.neighborUpdater.updateNeighborsAtExceptFromFacing(pos, blockObject, skipDirection, orientation);
+     }
+ 
+     @Override
+     public void neighborChanged(final BlockPos pos, final Block changedBlock, final @Nullable Orientation orientation) {
++        if (!io.papermc.paper.lab.rules.LabRuleState.blockUpdates) { return; } // Paper Lab - blockUpdates
+         this.neighborUpdater.neighborChanged(pos, changedBlock, orientation);
+     }
+ 
+@@ -2078,6 +2080,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     public void neighborChanged(
+         final BlockState state, final BlockPos pos, final Block changedBlock, final @Nullable Orientation orientation, final boolean movedByPiston
+     ) {
++        if (!io.papermc.paper.lab.rules.LabRuleState.blockUpdates) { return; } // Paper Lab - blockUpdates
+         this.neighborUpdater.neighborChanged(state, pos, changedBlock, orientation, movedByPiston);
+     }
+ 
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 277e97f978b79cf4b13c235cdf121412ff1a9c59..106f1e91ec56444a2fe51ac37c2666007d4f1a17 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1165,14 +1165,14 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+                 this.sendBlockUpdated(pos, oldState, blockState, updateFlags);
+             }
+ 
+-            if ((updateFlags & Block.UPDATE_NEIGHBORS) != 0) {
++            if ((updateFlags & Block.UPDATE_NEIGHBORS) != 0 && io.papermc.paper.lab.rules.LabRuleState.blockUpdates) {
+                 this.updateNeighborsAt(pos, oldState.getBlock());
+                 if (!this.isClientSide() && blockState.hasAnalogOutputSignal()) {
+                     this.updateNeighbourForOutputSignal(pos, blockState.getBlock());
+                 }
+             }
+ 
+-            if ((updateFlags & Block.UPDATE_KNOWN_SHAPE) == 0 && updateLimit > 0) {
++            if ((updateFlags & Block.UPDATE_KNOWN_SHAPE) == 0 && updateLimit > 0 && io.papermc.paper.lab.rules.LabRuleState.blockUpdates) {
+                 int neighbourUpdateFlags = updateFlags & ~(Block.UPDATE_SUPPRESS_DROPS | Block.UPDATE_NEIGHBORS);
+ 
+                 // CraftBukkit start
+@@ -1284,6 +1284,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         final @Block.UpdateFlags int updateFlags,
+         final int updateLimit
+     ) {
++        if (!io.papermc.paper.lab.rules.LabRuleState.blockUpdates) { return; } // Paper Lab - blockUpdates
+         this.neighborUpdater.shapeUpdate(direction, neighborState, pos, neighborPos, updateFlags, updateLimit);
+     }
+ 
+diff --git a/net/minecraft/world/level/redstone/NeighborUpdater.java b/net/minecraft/world/level/redstone/NeighborUpdater.java
+index 041ed95948ff6bb4cf3610ce4522a6ba105b6812..869719203a34182365a50208bc63142b8469d576 100644
+--- a/net/minecraft/world/level/redstone/NeighborUpdater.java
++++ b/net/minecraft/world/level/redstone/NeighborUpdater.java
+@@ -42,6 +42,7 @@ public interface NeighborUpdater {
+         final @Block.UpdateFlags int updateFlags,
+         final int updateLimit
+     ) {
++        if (!io.papermc.paper.lab.rules.LabRuleState.blockUpdates) { return; } // Paper Lab - blockUpdates rule
+         BlockState currentState = level.getBlockState(pos);
+         if ((updateFlags & Block.UPDATE_SKIP_SHAPE_UPDATE_ON_WIRE) == 0 || !currentState.is(Blocks.REDSTONE_WIRE)) {
+             try {
+@@ -72,6 +73,7 @@ public interface NeighborUpdater {
+ 
+     static void executeUpdate(Level level, BlockState state, BlockPos pos, Block changedBlock, @Nullable Orientation orientation, boolean movedByPiston, BlockPos sourcePos) {
+         // Paper end - Add source block to BlockPhysicsEvent
++        if (!io.papermc.paper.lab.rules.LabRuleState.blockUpdates) { return; } // Paper Lab - blockUpdates rule
+         try {
+             // CraftBukkit start
+             org.bukkit.event.block.BlockPhysicsEvent event = new org.bukkit.event.block.BlockPhysicsEvent(org.bukkit.craftbukkit.block.CraftBlock.at(level, pos), state.asBlockData(), org.bukkit.craftbukkit.block.CraftBlock.at(level, sourcePos)); // Paper - Add source block to BlockPhysicsEvent

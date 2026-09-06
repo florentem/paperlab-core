@@ -168,6 +168,7 @@ public final class LabTickZone {
     public void setFrozen(final boolean frozen) {
         final boolean wasFrozen = this.frozen;
         this.frozen = frozen;
+        this.timeAccumulator = 0.0D;
         if (frozen) {
             this.stepTicks = 0;
             this.ticksToRunThisFrame = 0;
@@ -178,7 +179,7 @@ public final class LabTickZone {
     }
 
     public void realignTicksToWorldTime() {
-        if (this.zoneGameTime > 0L) {
+        if (this.zoneGameTime >= 0L) {
             final net.minecraft.server.MinecraftServer server = net.minecraft.server.MinecraftServer.getServer();
             if (server != null) {
                 for (final ServerLevel sl : server.getAllLevels()) {
@@ -207,6 +208,7 @@ public final class LabTickZone {
     public void setTickRate(final float tickRate) {
         final float oldRate = this.tickRate;
         this.tickRate = Math.max(0.1F, Math.min(10000.0F, tickRate));
+        this.timeAccumulator = 0.0D;
         if (oldRate > 20.01F && this.tickRate <= 20.01F) {
             this.realignTicksToWorldTime();
         }
@@ -230,7 +232,7 @@ public final class LabTickZone {
 
     public long getGameTime(final ServerLevel level) {
         if (this.zoneGameTime < 0) {
-            this.zoneGameTime = level.getGameTime();
+            this.zoneGameTime = level.getGameTime() - 1L;
         }
         return this.zoneGameTime;
     }
@@ -282,7 +284,7 @@ public final class LabTickZone {
             return;
         }
         if (this.zoneGameTime < 0) {
-            this.zoneGameTime = level.getGameTime();
+            this.zoneGameTime = level.getGameTime() - 1L;
         }
         for (int i = 0; i < this.ticksToRunThisFrame; i++) {
             this.runOneTick(level);
