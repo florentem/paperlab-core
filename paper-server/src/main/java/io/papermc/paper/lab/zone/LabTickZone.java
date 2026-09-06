@@ -286,6 +286,18 @@ public final class LabTickZone {
             for (int i = 0; i < this.extraTicksThisFrame; i++) {
                 this.zoneGameTime++;
                 drainPendingTicks(level);
+                level.runExtraZoneTicks(this, i + 1);
+                for (int bi = 0; bi < level.blockEntityTickers.size(); bi++) {
+                    final net.minecraft.world.level.block.entity.TickingBlockEntity ticker = level.blockEntityTickers.get(bi);
+                    if (!ticker.isRemoved() && this.contains(ticker.getPos())) {
+                        ticker.tick();
+                    }
+                }
+                for (final net.minecraft.world.entity.Entity entity : level.getAllEntities()) {
+                    if (!(entity instanceof net.minecraft.world.entity.player.Player) && !entity.isPassenger() && this.contains(entity.blockPosition())) {
+                        level.tickNonPassenger(entity);
+                    }
+                }
             }
         }
     }

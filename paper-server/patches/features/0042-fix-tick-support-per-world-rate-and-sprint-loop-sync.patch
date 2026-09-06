@@ -1,0 +1,273 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 20:53:19 +0600
+Subject: [PATCH] fix(tick): support per-world rate and sprint loop, sync
+ entity freeze to prevent client prediction jumping, accelerate zone ticks
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index df3c77d66dcabe290c8bf98b51dee8f1897534b4..696c79cbdd93fffad28d66858503f93352224284 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1319,11 +1319,29 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             while (this.running) {
+                 final long tickStart = System.nanoTime(); // Paper - improve tick loop
+                 long thisTickNanos; // Paper - improve tick loop - diff on change, expect this to be tick interval
+-                if (!this.isPaused() && this.tickRateManager.isSprinting() && this.tickRateManager.checkShouldSprintThisTick()) {
++                boolean sprintingNow = !this.isPaused() && this.tickRateManager.isSprinting() && this.tickRateManager.checkShouldSprintThisTick();
++                if (!sprintingNow && !this.isPaused() && io.papermc.paper.lab.tick.LabPerWorldTick.isEnabled()) {
++                    for (ServerLevel level : this.getAllLevels()) {
++                        if (level != null && level.perWorldTickRateManager() != null) {
++                            if (level.perWorldTickRateManager().isSprinting() && level.perWorldTickRateManager().checkShouldSprintThisTick()) {
++                                sprintingNow = true;
++                                break;
++                            }
++                        }
++                    }
++                }
++                if (sprintingNow) {
+                     thisTickNanos = 0L;
+                     this.tickSchedule.setNextPeriod(tickStart, thisTickNanos); // Paper - improve tick loop
+                 } else {
+                     thisTickNanos = this.tickRateManager.nanosecondsPerTick();
++                    if (io.papermc.paper.lab.tick.LabPerWorldTick.isEnabled()) {
++                        for (ServerLevel level : this.getAllLevels()) {
++                            if (level != null && level.perWorldTickRateManager() != null) {
++                                thisTickNanos = Math.min(thisTickNanos, level.perWorldTickRateManager().nanosecondsPerTick());
++                            }
++                        }
++                    }
+                     // Paper start - improve tick loop
+                     // handle catchup logic
+                     final long ticksBehind = Math.max(1L, this.tickSchedule.getPeriodsAhead(thisTickNanos, tickStart));
+@@ -1369,6 +1387,13 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+                     this.finishMeasuringTaskExecutionTime();
+                     if (sprinting) {
+                         this.tickRateManager.endTickWork();
++                        if (io.papermc.paper.lab.tick.LabPerWorldTick.isEnabled()) {
++                            for (ServerLevel level : this.getAllLevels()) {
++                                if (level != null && level.perWorldTickRateManager() != null && level.perWorldTickRateManager().isSprinting()) {
++                                    level.perWorldTickRateManager().endTickWork();
++                                }
++                            }
++                        }
+                     }
+ 
+                     profiler.pop();
+@@ -1736,6 +1761,21 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         if (newAutosaveInterval < this.ticksUntilAutosave) {
+             this.ticksUntilAutosave = newAutosaveInterval;
+         }
++        if (this.tickSchedule != null) {
++            long interval = this.tickRateManager.nanosecondsPerTick();
++            if (io.papermc.paper.lab.tick.LabPerWorldTick.isEnabled()) {
++                for (ServerLevel level : this.getAllLevels()) {
++                    if (level != null && level.perWorldTickRateManager() != null) {
++                        if (level.perWorldTickRateManager().isSprinting()) {
++                            interval = 0L;
++                            break;
++                        }
++                        interval = Math.min(interval, level.perWorldTickRateManager().nanosecondsPerTick());
++                    }
++                }
++            }
++            this.tickSchedule.setNextPeriod(this.nextTickTimeNanos, interval);
++        }
+     }
+ 
+     protected abstract SampleLogger getTickTimeLogger();
+diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
+index 60af82925d2f7e605bf7340cf01f1a5668f4d725..7feb41570d056dd7d4e619bd1b3fc23e8e38e37e 100644
+--- a/net/minecraft/server/level/ServerEntity.java
++++ b/net/minecraft/server/level/ServerEntity.java
+@@ -169,7 +169,7 @@ public class ServerEntity {
+                 boolean positionChanged = (vec3_dx * vec3_dx + vec3_dy * vec3_dy + vec3_dz * vec3_dz) >= 7.62939453125E-6D;
+                 // Paper end - reduce allocation of Vec3D here
+                 Packet<ClientGamePacketListener> packet = null;
+-                boolean pos = positionChanged || this.tickCount % 60 == 0;
++                boolean pos = positionChanged || (!this.entity.isLabFrozen() && this.tickCount % 60 == 0);
+                 boolean sentPosition = false;
+                 boolean sentRotation = false;
+                 long xa = this.positionCodec.encodeX(currentPosition);
+@@ -328,6 +328,9 @@ public class ServerEntity {
+ 
+         Packet<ClientGamePacketListener> packet = this.entity.getAddEntityPacket(this);
+         broadcast.accept(packet);
++        if (this.entity.isLabFrozen()) {
++            broadcast.accept(new net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket(this.entity.getId(), Vec3.ZERO));
++        }
+         if (this.trackedDataValues != null) {
+             broadcast.accept(new ClientboundSetEntityDataPacket(this.entity.getId(), this.trackedDataValues));
+         }
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index d638373a309060d722f7df309a2eaef928d4a850..6f8155ff5709cdd7b638fc0936d233afbcd2c909 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -900,7 +900,9 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+                 .forEach(
+                     entity -> {
+                         if (!entity.isRemoved()) {
+-                            if (!tickRateManager.isEntityFrozen(entity) && !io.papermc.paper.lab.zone.LabTickZones.isEntityFrozen(this, entity)) {
++                            boolean isFrozen = tickRateManager.isEntityFrozen(entity) || io.papermc.paper.lab.zone.LabTickZones.isEntityFrozen(this, entity);
++                            entity.setLabFrozen(isFrozen);
++                            if (!isFrozen) {
+                                 profiler.push("checkDespawn");
+                                 entity.checkDespawn();
+                                 profiler.pop();
+@@ -1404,6 +1406,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+ 
+     }
+ 
++    // Paper Lab - tick acceleration in zones
++    public void runExtraZoneTicks(final io.papermc.paper.lab.zone.LabTickZone zone, final int extraTickIndex) {
++        long currentVirtual = this.getGameTime() + extraTickIndex;
++        this.blockTicks.drainAndRunZoneTicks(zone, currentVirtual, this::tickBlock);
++        this.fluidTicks.drainAndRunZoneTicks(zone, currentVirtual, this::tickFluid);
++    }
++
+     // Paper start - log detailed entity tick information
+     // TODO replace with varhandle
+     static final java.util.concurrent.atomic.AtomicReference<Entity> currentlyTickingEntity = new java.util.concurrent.atomic.AtomicReference<>();
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 56c577af9b7639af4d2179b7d3f00f6bf18617bf..3f68c5cd2ede262821c7bbbeb9ab544893cd28fa 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -675,6 +675,9 @@ public abstract class Entity
+     }
+ 
+     public final void discard(org.bukkit.event.entity.EntityRemoveEvent.@Nullable Cause cause) {
++        if (this.labFrozen) {
++            this.setLabFrozen(false);
++        }
+         this.remove(Entity.RemovalReason.DISCARDED, cause);
+         // CraftBukkit end
+     }
+@@ -2040,6 +2043,64 @@ public abstract class Entity
+         this.entityData.set(DATA_NO_GRAVITY, noGravity);
+     }
+ 
++    // Paper Lab start - entity freeze sync
++    private boolean labFrozen = false;
++    private boolean labSavedNoGravity = false;
++    private boolean labSavedNoAi = false;
++    private net.minecraft.world.phys.Vec3 labSavedDeltaMovement = null;
++
++    public boolean isLabFrozen() {
++        return this.labFrozen;
++    }
++
++    public boolean getLabSavedNoGravity() {
++        return this.labSavedNoGravity;
++    }
++
++    public boolean getLabSavedNoAi() {
++        return this.labSavedNoAi;
++    }
++
++    public void setLabFrozen(final boolean frozen) {
++        if (this.labFrozen == frozen) {
++            return;
++        }
++        if (this instanceof net.minecraft.world.entity.player.Player) {
++            return;
++        }
++        this.labFrozen = frozen;
++        if (frozen) {
++            this.labSavedNoGravity = this.isNoGravity();
++            this.labSavedDeltaMovement = this.getDeltaMovement();
++            if (this instanceof Mob mob) {
++                this.labSavedNoAi = mob.isNoAi();
++                mob.setNoAi(true);
++            }
++            this.setNoGravity(true);
++            this.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
++            if (this.level() instanceof net.minecraft.server.level.ServerLevel sl) {
++                sl.getChunkSource().sendToTrackingPlayers(this, new net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket(this.getId(), net.minecraft.world.phys.Vec3.ZERO));
++                sl.getChunkSource().sendToTrackingPlayers(this, net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket.of(this));
++            }
++        } else {
++            this.setNoGravity(this.labSavedNoGravity);
++            if (this instanceof Mob mob) {
++                mob.setNoAi(this.labSavedNoAi);
++            }
++            if (this.labSavedDeltaMovement != null) {
++                this.setDeltaMovement(this.labSavedDeltaMovement);
++                if (this.level() instanceof net.minecraft.server.level.ServerLevel sl) {
++                    sl.getChunkSource().sendToTrackingPlayers(this, new net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket(this.getId(), this.labSavedDeltaMovement));
++                }
++                this.labSavedDeltaMovement = null;
++            }
++            if (this.level() instanceof net.minecraft.server.level.ServerLevel sl) {
++                sl.getChunkSource().sendToTrackingPlayers(this, net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket.of(this));
++            }
++        }
++    }
++    // Paper Lab end - entity freeze sync
++
+     protected double getDefaultGravity() {
+         return 0.0;
+     }
+@@ -2703,8 +2764,9 @@ public abstract class Entity
+                 output.putBoolean("Silent", this.isSilent());
+             }
+ 
+-            if (this.isNoGravity()) {
+-                output.putBoolean("NoGravity", this.isNoGravity());
++            boolean noGrav = this.labFrozen ? this.labSavedNoGravity : this.isNoGravity();
++            if (noGrav) {
++                output.putBoolean("NoGravity", true);
+             }
+ 
+             if (this.hasGlowingTag) {
+diff --git a/net/minecraft/world/entity/Mob.java b/net/minecraft/world/entity/Mob.java
+index c2dd2da4bfb7d65ad2730ba1ce771e2b488beda4..1161236651848ff4c834868e24abaff3905dfa08 100644
+--- a/net/minecraft/world/entity/Mob.java
++++ b/net/minecraft/world/entity/Mob.java
+@@ -446,8 +446,9 @@ public abstract class Mob extends LivingEntity implements Targeting, EquipmentUs
+             output.putLong("DeathLootTableSeed", this.lootTableSeed);
+         }
+ 
+-        if (this.isNoAi()) {
+-            output.putBoolean("NoAI", this.isNoAi());
++        boolean noAi = this.isLabFrozen() ? this.getLabSavedNoAi() : this.isNoAi();
++        if (noAi) {
++            output.putBoolean("NoAI", true);
+         }
+         output.putBoolean("Bukkit.Aware", this.aware); // CraftBukkit
+     }
+diff --git a/net/minecraft/world/ticks/LevelTicks.java b/net/minecraft/world/ticks/LevelTicks.java
+index 7bf9e93692debcef511bfa316aeef32ae8a7d3b7..2374e3efe74a2c429bc13ce88fb3b7021f86534e 100644
+--- a/net/minecraft/world/ticks/LevelTicks.java
++++ b/net/minecraft/world/ticks/LevelTicks.java
+@@ -278,6 +278,31 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+         return this.allContainers.values().stream().mapToInt(TickAccess::count).sum();
+     }
+ 
++    // Paper Lab - tick acceleration in zones
++    public void drainAndRunZoneTicks(final io.papermc.paper.lab.zone.LabTickZone zone, final long maxTick, final BiConsumer<BlockPos, T> output) {
++        for (long chunkPos : zone.chunkPositions()) {
++            LevelChunkTicks<T> container = this.allContainers.get(chunkPos);
++            if (container == null) {
++                continue;
++            }
++            List<ScheduledTick<T>> toRun = null;
++            for (ScheduledTick<T> tick : container.getAll().toList()) {
++                if (tick.triggerTick() <= maxTick && zone.contains(tick.pos())) {
++                    if (toRun == null) {
++                        toRun = new ArrayList<>();
++                    }
++                    toRun.add(tick);
++                }
++            }
++            if (toRun != null) {
++                container.removeIf(toRun::contains);
++                for (ScheduledTick<T> tick : toRun) {
++                    output.accept(tick.pos(), tick.type());
++                }
++            }
++        }
++    }
++
+     @FunctionalInterface
+     private interface PosAndContainerConsumer<T> {
+         void accept(long pos, LevelChunkTicks<T> container);
