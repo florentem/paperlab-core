@@ -173,12 +173,33 @@ public final class LabTickZone {
         }
     }
 
+    public boolean isAccelerated() {
+        return !this.frozen && this.tickRate > 20.01F;
+    }
+
     public float tickRate() {
         return this.tickRate;
     }
 
     public void setTickRate(final float tickRate) {
+        final float oldRate = this.tickRate;
         this.tickRate = Math.max(0.1F, Math.min(10000.0F, tickRate));
+        if (oldRate > 20.01F && this.tickRate <= 20.01F) {
+            final net.minecraft.server.MinecraftServer server = net.minecraft.server.MinecraftServer.getServer();
+            if (server != null && this.zoneGameTime > 0L) {
+                for (final ServerLevel sl : server.getAllLevels()) {
+                    if (LabTickZones.resolveWorldKey(sl).equalsIgnoreCase(this.worldKey)) {
+                        final long delta = sl.getGameTime() - this.zoneGameTime;
+                        if (delta != 0L) {
+                            sl.getBlockTicks().shiftZoneTicks(this, delta);
+                            sl.getFluidTicks().shiftZoneTicks(this, delta);
+                        }
+                        break;
+                    }
+                }
+            }
+            this.zoneGameTime = -1L;
+        }
     }
 
     public int stepTicks() {
@@ -246,6 +267,17 @@ public final class LabTickZone {
      * Called at the end of ServerLevel.tick().
      */
     public void onWorldTickEnd(final ServerLevel level) {
+        if (this.frozen) {
+            if (this.ticksToRunThisFrame > 0) {
+                this.runOneTick(level);
+                this.ticksToRunThisFrame = 0;
+            }
+            return;
+        }
+        if (!this.isAccelerated()) {
+            this.ticksToRunThisFrame = 0;
+            return;
+        }
         if (this.zoneGameTime < 0) {
             this.zoneGameTime = level.getGameTime();
         }

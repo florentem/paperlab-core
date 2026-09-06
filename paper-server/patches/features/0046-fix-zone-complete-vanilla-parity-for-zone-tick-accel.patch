@@ -2,11 +2,11 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Bot <bot@example.com>
 Date: Sun, 6 Sep 2026 22:10:28 +0600
 Subject: [PATCH] fix(zone): complete vanilla parity for zone tick acceleration
- and TNT dupers
+ and normal rate
 
 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 2bac7b419ca9c4a241ad958c3e3399c88a609099..f61b0f07eca8a4ca3225a90649d3a23a68b9337d 100644
+index 2bac7b419ca9c4a241ad958c3e3399c88a609099..b03f7b22eb9ee7c0071cf2762130af9f8c41a445 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -904,7 +904,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
@@ -18,7 +18,7 @@ index 2bac7b419ca9c4a241ad958c3e3399c88a609099..f61b0f07eca8a4ca3225a90649d3a23a
                                  profiler.push("checkDespawn");
                                  entity.checkDespawn();
                                  profiler.pop();
-@@ -1408,11 +1408,91 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+@@ -1408,11 +1408,92 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
  
      }
  
@@ -37,56 +37,57 @@ index 2bac7b419ca9c4a241ad958c3e3399c88a609099..f61b0f07eca8a4ca3225a90649d3a23a
 +        if (this.blockEvents.isEmpty()) {
 +            return;
 +        }
-+        int iterations = 0;
-+        final int maxIterations = 1000;
-+        while (!this.blockEvents.isEmpty() && iterations++ < maxIterations) {
-+            this.blockEventsToReschedule.clear();
-+            boolean processedAny = false;
-+            while (!this.blockEvents.isEmpty()) {
-+                BlockEventData eventData = this.blockEvents.removeFirst();
-+                if (zone.contains(eventData.pos())) {
-+                    processedAny = true;
-+                    if (this.doBlockEvent(eventData)) {
-+                        this.server
-+                            .getPlayerList()
-+                            .broadcast(
-+                                null,
-+                                eventData.pos().getX(),
-+                                eventData.pos().getY(),
-+                                eventData.pos().getZ(),
-+                                64.0,
-+                                this.dimension(),
-+                                new ClientboundBlockEventPacket(eventData.pos(), eventData.block(), eventData.paramA(), eventData.paramB())
-+                            );
-+                    }
-+                } else {
-+                    this.blockEventsToReschedule.add(eventData);
-+                }
++        final List<BlockEventData> zoneEvents = new ArrayList<>();
++        final List<BlockEventData> remainingEvents = new ArrayList<>();
++        while (!this.blockEvents.isEmpty()) {
++            final BlockEventData event = this.blockEvents.removeFirst();
++            if (zone.contains(event.pos())) {
++                zoneEvents.add(event);
++            } else {
++                remainingEvents.add(event);
 +            }
-+            this.blockEvents.addAll(this.blockEventsToReschedule);
-+            if (!processedAny) {
-+                break;
++        }
++        this.blockEvents.addAll(remainingEvents);
++        for (final BlockEventData eventData : zoneEvents) {
++            if (this.shouldTickBlocksAt(eventData.pos())) {
++                if (this.doBlockEvent(eventData)) {
++                    this.server
++                        .getPlayerList()
++                        .broadcast(
++                            null,
++                            eventData.pos().getX(),
++                            eventData.pos().getY(),
++                            eventData.pos().getZ(),
++                            64.0,
++                            this.dimension(),
++                            new ClientboundBlockEventPacket(eventData.pos(), eventData.block(), eventData.paramA(), eventData.paramB())
++                        );
++                }
++            } else {
++                this.blockEvents.add(eventData);
 +            }
 +        }
 +    }
 +
 +    public void runZoneEntities(final io.papermc.paper.lab.zone.LabTickZone zone) {
-+        for (final Entity entity : this.getAllEntities()) {
-+            if (!entity.isRemoved() && !(entity instanceof net.minecraft.world.entity.player.Player) && !entity.isPassenger()) {
++        this.entityTickList.forEach(entity -> {
++            if (!entity.isRemoved() && !(entity instanceof net.minecraft.world.entity.player.Player)) {
 +                if (zone.contains(entity.blockPosition()) || zone.intersects(entity.getBoundingBox())) {
++                    final Entity vehicle = entity.getVehicle();
++                    if (vehicle != null) {
++                        if (!vehicle.isRemoved() && vehicle.hasPassenger(entity)) {
++                            return;
++                        }
++                        entity.stopRiding();
++                    }
 +                    this.guardEntityTick(this::tickNonPassenger, entity);
 +                }
 +            }
-+        }
++        });
 +    }
 +
 +    public void runZoneBlockEntities(final io.papermc.paper.lab.zone.LabTickZone zone) {
-+        for (int bi = 0; bi < this.blockEntityTickers.size(); bi++) {
-+            final net.minecraft.world.level.block.entity.TickingBlockEntity ticker = this.blockEntityTickers.get(bi);
-+            if (!ticker.isRemoved() && zone.contains(ticker.getPos())) {
-+                ticker.tick();
-+            }
-+        }
++        this.tickZoneBlockEntities(zone::contains);
 +    }
 +
 +    public void setHandlingTick(final boolean handlingTick) {
@@ -115,8 +116,39 @@ index 2bac7b419ca9c4a241ad958c3e3399c88a609099..f61b0f07eca8a4ca3225a90649d3a23a
      }
  
      // Paper start - log detailed entity tick information
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index bf815f4cd5d913a00c3626da16ec9f54426e8c0f..278f029d11f3eec968a90b6ae47d3e146d3e494b 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1518,6 +1518,26 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         this.tickingBlockEntities = false;
+     }
+ 
++    // Paper Lab - tick accelerated zone block entities
++    public void tickZoneBlockEntities(final java.util.function.Predicate<BlockPos> inZone) {
++        this.tickingBlockEntities = true;
++        try {
++            if (!this.pendingBlockEntityTickers.isEmpty()) {
++                this.blockEntityTickers.addAll(this.pendingBlockEntityTickers);
++                this.pendingBlockEntityTickers.clear();
++            }
++            final int initialSize = this.blockEntityTickers.size();
++            for (int bi = 0; bi < initialSize; bi++) {
++                final TickingBlockEntity ticker = this.blockEntityTickers.get(bi);
++                if (!ticker.isRemoved() && inZone.test(ticker.getPos())) {
++                    ticker.tick();
++                }
++            }
++        } finally {
++            this.tickingBlockEntities = false;
++        }
++    }
++
+     public <T extends Entity> void guardEntityTick(final Consumer<T> tick, final T entity) {
+         try {
+             tick.accept(entity);
 diff --git a/net/minecraft/world/ticks/LevelTicks.java b/net/minecraft/world/ticks/LevelTicks.java
-index 15e0acf3744b678c0aad1b9937e18771a6d6985b..3776c8b798c407334af2638995102301950f9c16 100644
+index 15e0acf3744b678c0aad1b9937e18771a6d6985b..ffbcdc08fcaf9cf121f5fdda9c663cb45621394b 100644
 --- a/net/minecraft/world/ticks/LevelTicks.java
 +++ b/net/minecraft/world/ticks/LevelTicks.java
 @@ -192,9 +192,9 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
@@ -132,7 +164,7 @@ index 15e0acf3744b678c0aad1b9937e18771a6d6985b..3776c8b798c407334af2638995102301
                  continue;
              }
  
-@@ -319,25 +319,56 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+@@ -319,25 +319,51 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
  
      // Paper Lab - tick acceleration in zones
      public void drainAndRunZoneTicks(final io.papermc.paper.lab.zone.LabTickZone zone, final long maxTick, final BiConsumer<BlockPos, T> output) {
@@ -146,32 +178,28 @@ index 15e0acf3744b678c0aad1b9937e18771a6d6985b..3776c8b798c407334af2638995102301
 -                if (tick.triggerTick() <= maxTick && zone.contains(tick.pos())) {
 -                    if (toRun == null) {
 -                        toRun = new ArrayList<>();
-+        int processed = 0;
-+        final int limit = 10000;
-+        while (processed < limit) {
-+            final List<ScheduledTick<T>> toRun = new ArrayList<>();
-+            for (final long chunkPos : zone.chunkPositions()) {
-+                final LevelChunkTicks<T> container = this.allContainers.get(chunkPos);
-+                if (container != null) {
-+                    List<ScheduledTick<T>> chunkTicks = null;
-+                    for (final ScheduledTick<T> tick : container.getAll().toList()) {
-+                        if (tick.triggerTick() <= maxTick && zone.contains(tick.pos())) {
-+                            if (chunkTicks == null) {
-+                                chunkTicks = new ArrayList<>();
-+                            }
-+                            chunkTicks.add(tick);
++        final List<ScheduledTick<T>> toRun = new ArrayList<>();
++        for (final long chunkPos : zone.chunkPositions()) {
++            final LevelChunkTicks<T> container = this.allContainers.get(chunkPos);
++            if (container != null) {
++                List<ScheduledTick<T>> chunkTicks = null;
++                for (final ScheduledTick<T> tick : container.getAll().toList()) {
++                    if (tick.triggerTick() <= maxTick && zone.contains(tick.pos())) {
++                        if (chunkTicks == null) {
++                            chunkTicks = new ArrayList<>();
 +                        }
-+                    }
-+                    if (chunkTicks != null) {
-+                        container.removeIf(chunkTicks::contains);
-+                        if (container.peek() == null) {
-+                            this.nextTickForContainer.remove(chunkPos);
-+                        } else {
-+                            this.nextTickForContainer.put(chunkPos, container.peek().triggerTick());
-+                        }
-+                        toRun.addAll(chunkTicks);
++                        chunkTicks.add(tick);
                      }
 -                    toRun.add(tick);
++                }
++                if (chunkTicks != null) {
++                    container.removeIf(chunkTicks::contains);
++                    if (container.peek() == null) {
++                        this.nextTickForContainer.remove(chunkPos);
++                    } else {
++                        this.nextTickForContainer.put(chunkPos, container.peek().triggerTick());
++                    }
++                    toRun.addAll(chunkTicks);
                  }
              }
 -            if (toRun != null) {
@@ -179,14 +207,13 @@ index 15e0acf3744b678c0aad1b9937e18771a6d6985b..3776c8b798c407334af2638995102301
 -                toRun.sort(ScheduledTick.DRAIN_ORDER);
 -                for (ScheduledTick<T> tick : toRun) {
 -                    output.accept(tick.pos(), tick.type());
-+            if (toRun.isEmpty()) {
-+                break;
-+            }
-+            toRun.sort(ScheduledTick.DRAIN_ORDER);
-+            for (final ScheduledTick<T> tick : toRun) {
-+                output.accept(tick.pos(), tick.type());
-+                processed++;
-+            }
++        }
++        if (toRun.isEmpty()) {
++            return;
++        }
++        toRun.sort(ScheduledTick.DRAIN_ORDER);
++        for (final ScheduledTick<T> tick : toRun) {
++            output.accept(tick.pos(), tick.type());
 +        }
 +    }
 +

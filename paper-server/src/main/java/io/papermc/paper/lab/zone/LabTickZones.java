@@ -289,14 +289,15 @@ public final class LabTickZones {
 
     // --- Hooks called from Level & ServerLevel ---
 
-    public static boolean isInActiveZone(final Level level, final BlockPos pos) {
+    public static boolean isAcceleratedZone(final Level level, final BlockPos pos) {
         if (!enabled || !hasActiveZones || level == null || pos == null) {
             return false;
         }
-        return getZoneAt(level, pos) != null;
+        final LabTickZone zone = getZoneAt(level, pos);
+        return zone != null && zone.isAccelerated();
     }
 
-    public static boolean isInActiveZone(final Level level, final Entity entity) {
+    public static boolean isAcceleratedZone(final Level level, final Entity entity) {
         if (!enabled || !hasActiveZones || level == null || entity == null) {
             return false;
         }
@@ -308,7 +309,20 @@ public final class LabTickZones {
                 return false;
             }
         }
-        return getZoneAt(level, entity.blockPosition()) != null || getZoneIntersecting(level, entity.getBoundingBox()) != null;
+        final LabTickZone zone = getZoneAt(level, entity.blockPosition());
+        if (zone != null && zone.isAccelerated()) {
+            return true;
+        }
+        final LabTickZone intersect = getZoneIntersecting(level, entity.getBoundingBox());
+        return intersect != null && intersect.isAccelerated();
+    }
+
+    public static boolean isInActiveZone(final Level level, final BlockPos pos) {
+        return isAcceleratedZone(level, pos);
+    }
+
+    public static boolean isInActiveZone(final Level level, final Entity entity) {
+        return isAcceleratedZone(level, entity);
     }
 
     public static boolean shouldTickBlock(final ServerLevel level, final BlockPos pos, final Block type) {
@@ -327,7 +341,13 @@ public final class LabTickZones {
         if (zone == null) {
             return true;
         }
-        return currentTickingZone == zone;
+        if (currentTickingZone == zone) {
+            return true;
+        }
+        if (zone.isFrozen()) {
+            return false;
+        }
+        return !zone.isAccelerated();
     }
 
     public static boolean shouldTickBlockEntity(final Level level, final BlockPos pos) {
@@ -338,7 +358,13 @@ public final class LabTickZones {
         if (zone == null) {
             return true;
         }
-        return currentTickingZone == zone;
+        if (currentTickingZone == zone) {
+            return true;
+        }
+        if (zone.isFrozen()) {
+            return false;
+        }
+        return !zone.isAccelerated();
     }
 
     public static boolean isBlockFrozen(final Level level, final BlockPos pos) {
@@ -417,7 +443,7 @@ public final class LabTickZones {
             return current.getGameTime((ServerLevel) level);
         }
         final LabTickZone zone = getZoneAt(level, pos);
-        if (zone != null) {
+        if (zone != null && zone.isAccelerated()) {
             return zone.getGameTime((ServerLevel) level);
         }
         return level.getGameTime();
