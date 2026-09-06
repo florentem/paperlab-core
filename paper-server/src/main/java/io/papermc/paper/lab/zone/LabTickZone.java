@@ -2,9 +2,7 @@ package io.papermc.paper.lab.zone;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -13,18 +11,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.material.Fluid;
-import net.minecraft.world.level.material.FluidState;
 
 /**
  * A discrete ticking zone composed of any number of intersecting or disjoint 3D cuboids.
  */
 public final class LabTickZone {
-
-    public record PendingBlock(BlockPos pos, Block type) {}
-    public record PendingFluid(BlockPos pos, Fluid type) {}
 
     private final String name;
     private final String worldKey;
@@ -43,9 +34,6 @@ public final class LabTickZone {
 
     private volatile boolean tickingThisFrame = true;
     private volatile int extraTicksThisFrame = 0;
-
-    private final Set<PendingBlock> pendingBlockTicks = new LinkedHashSet<>();
-    private final Set<PendingFluid> pendingFluidTicks = new LinkedHashSet<>();
 
     public LabTickZone(final String name, final String worldKey, final UUID owner) {
         this.name = name;
@@ -217,48 +205,6 @@ public final class LabTickZone {
         return this.tickingThisFrame;
     }
 
-    public synchronized void recordPendingBlock(final BlockPos pos, final Block type) {
-        final PendingBlock entry = new PendingBlock(pos.immutable(), type);
-        if (!this.pendingBlockTicks.contains(entry)) {
-            this.pendingBlockTicks.add(entry);
-        }
-    }
-
-    public synchronized void recordPendingFluid(final BlockPos pos, final Fluid type) {
-        final PendingFluid entry = new PendingFluid(pos.immutable(), type);
-        if (!this.pendingFluidTicks.contains(entry)) {
-            this.pendingFluidTicks.add(entry);
-        }
-    }
-
-    /**
-     * Drain pending block and fluid ticks.
-     */
-    public synchronized void drainPendingTicks(final ServerLevel level) {
-        if (!this.pendingBlockTicks.isEmpty()) {
-            final List<PendingBlock> toRun = new ArrayList<>(this.pendingBlockTicks);
-            this.pendingBlockTicks.clear();
-            for (final PendingBlock entry : toRun) {
-                final BlockState state = level.getBlockState(entry.pos());
-                if (state.is(entry.type())) {
-                    state.tick(level, entry.pos(), level.getRandom());
-                }
-            }
-        }
-
-        if (!this.pendingFluidTicks.isEmpty()) {
-            final List<PendingFluid> toRun = new ArrayList<>(this.pendingFluidTicks);
-            this.pendingFluidTicks.clear();
-            for (final PendingFluid entry : toRun) {
-                final BlockState state = level.getBlockState(entry.pos());
-                final FluidState fluid = state.getFluidState();
-                if (fluid.is(entry.type())) {
-                    fluid.tick(level, entry.pos(), state);
-                }
-            }
-        }
-    }
-
     /**
      * Called at the beginning of ServerLevel.tick() to determine if this zone ticks this frame.
      */
@@ -294,17 +240,14 @@ public final class LabTickZone {
             if (this.stepTicks > 0) {
                 this.stepTicks--;
                 this.zoneGameTime++;
-                drainPendingTicks(level);
             }
             return;
         }
 
         if (this.tickingThisFrame) {
             this.zoneGameTime++;
-            drainPendingTicks(level);
             for (int i = 0; i < this.extraTicksThisFrame; i++) {
                 this.zoneGameTime++;
-                drainPendingTicks(level);
                 level.runExtraZoneTicks(this, i + 1);
                 for (int bi = 0; bi < level.blockEntityTickers.size(); bi++) {
                     final net.minecraft.world.level.block.entity.TickingBlockEntity ticker = level.blockEntityTickers.get(bi);

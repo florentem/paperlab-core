@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 21:36:26 +0600
+Subject: [PATCH] fix(ticks): preserve vanilla redstone parity with native tick
+ postponement in frozen zones
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index a76ee66a9b3dae183eaa5b33ee8bd5bccc978add..2bac7b419ca9c4a241ad958c3e3399c88a609099 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -658,6 +658,8 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             this.clockManager.init(server, this); // Paper - per-world time
+         }
+         // Paper end - per-world time
++        this.blockTicks.level = this; // Paper Lab - tick zones
++        this.fluidTicks.level = this; // Paper Lab - tick zones
+         if (loadedWorldData.pdc() != null) {
+             this.persistentDataContainer.putAll(loadedWorldData.pdc().persistentData().toTagCompound());
+         }
+diff --git a/net/minecraft/world/ticks/LevelChunkTicks.java b/net/minecraft/world/ticks/LevelChunkTicks.java
+index 88eb48034d8022600dc08b4dcf6162bbdd8c6d33..9771617d7a5a932bacf35978541a1b2c852b9e06 100644
+--- a/net/minecraft/world/ticks/LevelChunkTicks.java
++++ b/net/minecraft/world/ticks/LevelChunkTicks.java
+@@ -108,6 +108,31 @@ public class LevelChunkTicks<T> implements TickContainerAccess<T>, SerializableT
+         return this.tickQueue.stream();
+     }
+ 
++    // Paper Lab - postpone ticks in frozen zones
++    public boolean postponeTicks(final Predicate<BlockPos> shouldPostpone, final long delta) {
++        if (this.tickQueue.isEmpty() || delta <= 0L) {
++            return false;
++        }
++        List<ScheduledTick<T>> postponed = null;
++        Iterator<ScheduledTick<T>> iterator = this.tickQueue.iterator();
++        while (iterator.hasNext()) {
++            ScheduledTick<T> tick = iterator.next();
++            if (shouldPostpone.test(tick.pos())) {
++                iterator.remove();
++                if (postponed == null) {
++                    postponed = new ArrayList<>();
++                }
++                postponed.add(new ScheduledTick<>(tick.type(), tick.pos(), tick.triggerTick() + delta, tick.priority(), tick.subTickOrder()));
++            }
++        }
++        if (postponed != null) {
++            this.tickQueue.addAll(postponed);
++            this.dirty = true;
++            return true;
++        }
++        return false;
++    }
++
+     @Override
+     public int count() {
+         return this.tickQueue.size() + (this.pendingTicks != null ? this.pendingTicks.size() : 0);
+diff --git a/net/minecraft/world/ticks/LevelTicks.java b/net/minecraft/world/ticks/LevelTicks.java
+index 2374e3efe74a2c429bc13ce88fb3b7021f86534e..15e0acf3744b678c0aad1b9937e18771a6d6985b 100644
+--- a/net/minecraft/world/ticks/LevelTicks.java
++++ b/net/minecraft/world/ticks/LevelTicks.java
+@@ -26,7 +26,9 @@ import net.minecraft.util.Util;
+ import net.minecraft.util.profiling.Profiler;
+ import net.minecraft.util.profiling.ProfilerFiller;
+ import net.minecraft.world.level.ChunkPos;
++import net.minecraft.world.level.Level;
+ import net.minecraft.world.level.levelgen.structure.BoundingBox;
++import org.jspecify.annotations.Nullable;
+ 
+ public class LevelTicks<T> implements LevelTickAccess<T> {
+     private static final Comparator<LevelChunkTicks<?>> CONTAINER_DRAIN_ORDER = (o1, o2) -> ScheduledTick.INTRA_TICK_DRAIN_ORDER.compare(o1.peek(), o2.peek());
+@@ -42,6 +44,7 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+             this.updateContainerScheduling(newTick);
+         }
+     };
++    public @Nullable Level level; // Paper Lab - tick zones
+ 
+     public LevelTicks(final LongPredicate tickCheck) {
+         this.tickCheck = tickCheck;
+@@ -79,6 +82,9 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+     }
+ 
+     public void tick(final long currentTick, final int maxTicksToProcess, final BiConsumer<BlockPos, T> output) {
++        if (this.level != null) {
++            this.postponeSkippingTicks(this.level);
++        }
+         ProfilerFiller profiler = Profiler.get();
+         profiler.push("collect");
+         this.collectTicks(currentTick, maxTicksToProcess, profiler);
+@@ -186,6 +192,12 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+                 this.toRunThisTickSet.remove(entry);
+             }
+ 
++            // Paper Lab - guard against ticking frozen zone blocks
++            if (this.level != null && io.papermc.paper.lab.zone.LabTickZones.isBlockFrozen(this.level, entry.pos())) {
++                this.schedule(new ScheduledTick<>(entry.type(), entry.pos(), entry.triggerTick() + 1L, entry.priority(), entry.subTickOrder()));
++                continue;
++            }
++
+             this.alreadyRunThisTick.add(entry);
+             output.accept(entry.pos(), entry.type());
+         }
+@@ -278,6 +290,33 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+         return this.allContainers.values().stream().mapToInt(TickAccess::count).sum();
+     }
+ 
++    // Paper Lab - postpone ticks in skipping/frozen zones
++    public void postponeSkippingTicks(final net.minecraft.world.level.Level level) {
++        if (!io.papermc.paper.lab.zone.LabTickZones.hasSkippingZones(level)) {
++            return;
++        }
++        final it.unimi.dsi.fastutil.longs.LongSet skippingChunks = io.papermc.paper.lab.zone.LabTickZones.getSkippingChunkPositions(level);
++        if (skippingChunks.isEmpty()) {
++            return;
++        }
++        final it.unimi.dsi.fastutil.longs.LongIterator it = skippingChunks.iterator();
++        while (it.hasNext()) {
++            final long chunkPos = it.nextLong();
++            final LevelChunkTicks<T> container = this.allContainers.get(chunkPos);
++            if (container != null && container.count() > 0) {
++                final boolean changed = container.postponeTicks(pos -> io.papermc.paper.lab.zone.LabTickZones.isBlockFrozen(level, pos), 1L);
++                if (changed) {
++                    final ScheduledTick<T> top = container.peek();
++                    if (top != null) {
++                        this.nextTickForContainer.put(chunkPos, top.triggerTick());
++                    } else {
++                        this.nextTickForContainer.remove(chunkPos);
++                    }
++                }
++            }
++        }
++    }
++
+     // Paper Lab - tick acceleration in zones
+     public void drainAndRunZoneTicks(final io.papermc.paper.lab.zone.LabTickZone zone, final long maxTick, final BiConsumer<BlockPos, T> output) {
+         for (long chunkPos : zone.chunkPositions()) {
+@@ -296,6 +335,7 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+             }
+             if (toRun != null) {
+                 container.removeIf(toRun::contains);
++                toRun.sort(ScheduledTick.DRAIN_ORDER);
+                 for (ScheduledTick<T> tick : toRun) {
+                     output.accept(tick.pos(), tick.type());
+                 }

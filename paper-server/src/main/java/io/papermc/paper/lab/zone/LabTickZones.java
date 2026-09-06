@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
@@ -260,33 +262,11 @@ public final class LabTickZones {
     // --- Hooks called from Level & ServerLevel ---
 
     public static boolean shouldTickBlock(final ServerLevel level, final BlockPos pos, final Block type) {
-        if (!enabled || !hasActiveZones) {
-            return true;
-        }
-        final LabTickZone zone = getZoneAt(level, pos);
-        if (zone == null) {
-            return true;
-        }
-        if (!zone.shouldTickNow()) {
-            zone.recordPendingBlock(pos, type);
-            return false;
-        }
-        return true;
+        return !isBlockFrozen(level, pos);
     }
 
     public static boolean shouldTickFluid(final ServerLevel level, final BlockPos pos, final Fluid type) {
-        if (!enabled || !hasActiveZones) {
-            return true;
-        }
-        final LabTickZone zone = getZoneAt(level, pos);
-        if (zone == null) {
-            return true;
-        }
-        if (!zone.shouldTickNow()) {
-            zone.recordPendingFluid(pos, type);
-            return false;
-        }
-        return true;
+        return !isBlockFrozen(level, pos);
     }
 
     public static boolean shouldRunBlockEvent(final ServerLevel level, final BlockPos pos, final Object eventData) {
@@ -370,6 +350,41 @@ public final class LabTickZones {
             return false;
         }
         return !zone.shouldTickNow();
+    }
+
+    public static boolean hasSkippingZones(final Level level) {
+        if (!enabled || !hasActiveZones || level == null) {
+            return false;
+        }
+        final String worldKey = resolveWorldKey(level);
+        final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
+        if (worldZones == null || worldZones.isEmpty()) {
+            return false;
+        }
+        for (final LabTickZone zone : worldZones.values()) {
+            if (!zone.shouldTickNow()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static LongSet getSkippingChunkPositions(final Level level) {
+        final LongSet chunks = new LongOpenHashSet();
+        if (!enabled || !hasActiveZones || level == null) {
+            return chunks;
+        }
+        final String worldKey = resolveWorldKey(level);
+        final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
+        if (worldZones == null || worldZones.isEmpty()) {
+            return chunks;
+        }
+        for (final LabTickZone zone : worldZones.values()) {
+            if (!zone.shouldTickNow()) {
+                chunks.addAll(zone.chunkPositions());
+            }
+        }
+        return chunks;
     }
 
     public static void onLevelTickStart(final ServerLevel level) {
