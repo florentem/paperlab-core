@@ -69,7 +69,7 @@ public final class LabTickCommand {
             source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));
             return 0;
         }
-        final ServerTickRateManager manager = source.getServer().tickRateManager();
+        final ServerTickRateManager manager = io.papermc.paper.lab.tick.LabPerWorldTick.getManager(source);
         final boolean freeze = !manager.isFrozen();
         if (freeze) {
             // Same order as vanilla setFreeze: stop sprinting and stepping first.
@@ -92,7 +92,7 @@ public final class LabTickCommand {
             source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));
             return 0;
         }
-        final ServerTickRateManager manager = source.getServer().tickRateManager();
+        final ServerTickRateManager manager = io.papermc.paper.lab.tick.LabPerWorldTick.getManager(source);
         manager.requestGameToSprint(ticks);
         source.sendSuccess(() -> Component.literal("warp " + ticks + "t")
             .withStyle(ChatFormatting.AQUA), true);
@@ -105,7 +105,7 @@ public final class LabTickCommand {
             source.sendFailure(Component.literal("Missing permission: paperlab.tick.global"));
             return 0;
         }
-        final boolean stopped = source.getServer().tickRateManager().stopSprinting();
+        final boolean stopped = io.papermc.paper.lab.tick.LabPerWorldTick.getManager(source).stopSprinting();
         source.sendSuccess(() -> Component.literal(stopped ? "warp stop" : "was not running")
             .withStyle(ChatFormatting.DARK_GRAY), false);
         return stopped ? 1 : 0;

@@ -69,10 +69,46 @@ public final class LabTickZones {
         hasActiveZones = any;
     }
 
+    public static String resolveWorldKey(final Level level) {
+        if (level == null) {
+            return "";
+        }
+        try {
+            final org.bukkit.World bukkitWorld = level.getWorld();
+            if (bukkitWorld != null) {
+                final String bukkitName = bukkitWorld.getName().toLowerCase(Locale.ROOT);
+                if (ZONES.containsKey(bukkitName) || CHUNK_INDEX.containsKey(bukkitName)) {
+                    return bukkitName;
+                }
+            }
+        } catch (final Throwable ignored) {
+        }
+
+        final String dimKey = level.dimension().identifier().toString().toLowerCase(Locale.ROOT);
+        if (ZONES.containsKey(dimKey) || CHUNK_INDEX.containsKey(dimKey)) {
+            return dimKey;
+        }
+
+        final String pathKey = level.dimension().identifier().getPath().toLowerCase(Locale.ROOT);
+        if (ZONES.containsKey(pathKey) || CHUNK_INDEX.containsKey(pathKey)) {
+            return pathKey;
+        }
+
+        try {
+            final org.bukkit.World bukkitWorld = level.getWorld();
+            if (bukkitWorld != null) {
+                return bukkitWorld.getName().toLowerCase(Locale.ROOT);
+            }
+        } catch (final Throwable ignored) {
+        }
+        return dimKey;
+    }
+
     public static void rebuildChunkIndex(final String worldKey) {
-        final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
+        final String normKey = worldKey.toLowerCase(Locale.ROOT);
+        final Map<String, LabTickZone> worldZones = ZONES.get(normKey);
         if (worldZones == null || worldZones.isEmpty()) {
-            CHUNK_INDEX.remove(worldKey);
+            CHUNK_INDEX.remove(normKey);
             return;
         }
         final Map<Long, List<LabTickZone>> map = new ConcurrentHashMap<>();
@@ -81,30 +117,32 @@ public final class LabTickZones {
                 map.computeIfAbsent(chunkPos, k -> new CopyOnWriteArrayList<>()).add(zone);
             }
         }
-        CHUNK_INDEX.put(worldKey, map);
+        CHUNK_INDEX.put(normKey, map);
     }
 
     // --- Registry Operations ---
 
     public static LabTickZone createZone(final String worldKey, final String name, final UUID owner) {
-        final Map<String, LabTickZone> worldZones = ZONES.computeIfAbsent(worldKey, k -> new ConcurrentHashMap<>());
+        final String normWorld = worldKey.toLowerCase(Locale.ROOT);
+        final Map<String, LabTickZone> worldZones = ZONES.computeIfAbsent(normWorld, k -> new ConcurrentHashMap<>());
         final String key = name.toLowerCase(Locale.ROOT);
-        final LabTickZone zone = new LabTickZone(name, worldKey, owner);
+        final LabTickZone zone = new LabTickZone(name, normWorld, owner);
         worldZones.put(key, zone);
-        rebuildChunkIndex(worldKey);
+        rebuildChunkIndex(normWorld);
         updateActiveStatus();
         return zone;
     }
 
     public static boolean removeZone(final String worldKey, final String name) {
-        final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
+        final String normWorld = worldKey.toLowerCase(Locale.ROOT);
+        final Map<String, LabTickZone> worldZones = ZONES.get(normWorld);
         if (worldZones != null) {
             final String key = name.toLowerCase(Locale.ROOT);
             final LabTickZone removed = worldZones.remove(key);
             if (removed != null) {
                 // Clear any player focus pointing to this zone
                 PLAYER_FOCUS.values().removeIf(z -> z.equalsIgnoreCase(name));
-                rebuildChunkIndex(worldKey);
+                rebuildChunkIndex(normWorld);
                 updateActiveStatus();
                 return true;
             }
@@ -113,7 +151,8 @@ public final class LabTickZones {
     }
 
     public static LabTickZone getZone(final String worldKey, final String name) {
-        final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
+        final String normWorld = worldKey.toLowerCase(Locale.ROOT);
+        final Map<String, LabTickZone> worldZones = ZONES.get(normWorld);
         if (worldZones != null) {
             return worldZones.get(name.toLowerCase(Locale.ROOT));
         }
@@ -132,7 +171,8 @@ public final class LabTickZones {
     }
 
     public static Collection<LabTickZone> getZonesInWorld(final String worldKey) {
-        final Map<String, LabTickZone> map = ZONES.get(worldKey);
+        final String normWorld = worldKey.toLowerCase(Locale.ROOT);
+        final Map<String, LabTickZone> map = ZONES.get(normWorld);
         return map != null ? Collections.unmodifiableCollection(map.values()) : Collections.emptyList();
     }
 
@@ -140,7 +180,7 @@ public final class LabTickZones {
         if (!enabled || !hasActiveZones || level == null || pos == null) {
             return null;
         }
-        final String worldKey = level.dimension().identifier().toString();
+        final String worldKey = resolveWorldKey(level);
         final Map<Long, List<LabTickZone>> index = CHUNK_INDEX.get(worldKey);
         if (index == null || index.isEmpty()) {
             return null;
@@ -294,7 +334,7 @@ public final class LabTickZones {
         if (!enabled || !hasActiveZones) {
             return;
         }
-        final String worldKey = level.dimension().identifier().toString();
+        final String worldKey = resolveWorldKey(level);
         final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
         if (worldZones != null && !worldZones.isEmpty()) {
             for (final LabTickZone zone : worldZones.values()) {
@@ -307,7 +347,7 @@ public final class LabTickZones {
         if (!enabled || !hasActiveZones) {
             return;
         }
-        final String worldKey = level.dimension().identifier().toString();
+        final String worldKey = resolveWorldKey(level);
         final Map<String, LabTickZone> worldZones = ZONES.get(worldKey);
         if (worldZones != null && !worldZones.isEmpty()) {
             for (final LabTickZone zone : worldZones.values()) {

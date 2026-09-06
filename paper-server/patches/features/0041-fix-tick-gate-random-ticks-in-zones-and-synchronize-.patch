@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bot <bot@example.com>
+Date: Sun, 6 Sep 2026 20:28:43 +0600
+Subject: [PATCH] fix(tick): gate random ticks in zones and synchronize freeze
+ state immediately
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 1a54a89983c0a7fc0f1abf54c18448aed7ab7400..d638373a309060d722f7df309a2eaef928d4a850 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1014,10 +1014,12 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+                 // do not use a mutable pos, as some random tick implementations store the input without calling immutable()!
+                 final BlockPos pos = new BlockPos((location & 15) | offsetX, ((location >>> (4 + 4)) & 15) | offsetY, ((location >>> 4) & 15) | offsetZ);
+ 
+-                state.randomTick((ServerLevel)(Object)this, pos, simpleRandom);
++                if (io.papermc.paper.lab.zone.LabTickZones.shouldTickBlock((ServerLevel)(Object)this, pos, state.getBlock())) {
++                    state.randomTick((ServerLevel)(Object)this, pos, simpleRandom);
++                }
+                 if (doubleTickFluids) {
+                     final FluidState fluidState = state.getFluidState();
+-                    if (fluidState.isRandomlyTicking()) {
++                    if (fluidState.isRandomlyTicking() && io.papermc.paper.lab.zone.LabTickZones.shouldTickFluid((ServerLevel)(Object)this, pos, fluidState.getType())) {
+                         fluidState.randomTick((ServerLevel)(Object)this, pos, simpleRandom);
+                     }
+                 }
+@@ -1093,13 +1095,13 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         BlockPos topPos = this.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING, pos);
+         BlockPos belowPos = topPos.below();
+         Biome biome = this.getBiome(topPos).value();
+-        if (biome.shouldFreeze(this, belowPos)) {
++        if (biome.shouldFreeze(this, belowPos) && io.papermc.paper.lab.zone.LabTickZones.shouldTickBlock(this, belowPos, Blocks.ICE)) {
+             org.bukkit.craftbukkit.event.CraftEventFactory.handleBlockFormEvent(this, belowPos, Blocks.ICE.defaultBlockState(), Block.UPDATE_ALL, null); // CraftBukkit
+         }
+ 
+         if (this.isRaining()) {
+             int maxHeight = this.getGameRules().get(GameRules.MAX_SNOW_ACCUMULATION_HEIGHT);
+-            if (maxHeight > 0 && biome.shouldSnow(this, topPos)) {
++            if (maxHeight > 0 && biome.shouldSnow(this, topPos) && io.papermc.paper.lab.zone.LabTickZones.shouldTickBlock(this, topPos, Blocks.SNOW)) {
+                 BlockState state = this.getBlockState(topPos);
+                 if (state.is(Blocks.SNOW)) {
+                     int currentLayers = state.getValue(SnowLayerBlock.LAYERS);
+diff --git a/net/minecraft/world/TickRateManager.java b/net/minecraft/world/TickRateManager.java
+index fbd04bd1e21fe5930ad02b7527a72281b5784b3a..874102467ad3eace4ebce79424581efb45fbaf14 100644
+--- a/net/minecraft/world/TickRateManager.java
++++ b/net/minecraft/world/TickRateManager.java
+@@ -47,6 +47,7 @@ public class TickRateManager {
+ 
+     public void setFrozen(final boolean state) {
+         this.isFrozen = state;
++        this.runGameElements = !this.isFrozen || this.frozenTicksToRun > 0;
+     }
+ 
+     public boolean isFrozen() {
