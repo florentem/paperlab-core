@@ -119,10 +119,15 @@ git status --short paper-server/patches    # должен измениться �
 
 ---
 
-## Лицензия
+## Лицензия и сторонние проекты
 
-Наследуется от Paper: **GPL-3.0** для серверной части, MIT для API. Подробности —
+Наследуется от Paper: **GPL-3.0** для серверной части, **MIT** для API. Подробности —
 [LICENSE.md](LICENSE.md), исходный README апстрима — [README-Paper.md](README-Paper.md).
 
-Всё, что добавлено этим форком, распространяется на тех же условиях.
-Форматы взаимодействия совместимы с клиентским модом Capture & Playback (автор [G4me4u](https://modrinth.com/mod/capture-playback)); код хуков ядра и менеджера стримов написан заново под GPL-3.0.
+Всё, что добавлено этим форком, распространяется на тех же условиях (GPL-3.0).
+Хуки ядра используют концепции и обеспечивают совместимость со следующими проектами:
+* **[PaperMC](https://github.com/PaperMC/Paper)** — лицензия GPL-3.0 (сервер) / MIT (API).
+* **[Fabric Carpet](https://github.com/gnembon/fabric-carpet)** (автор [gnembon](https://github.com/gnembon)) — лицензия MIT. Архитектура ботов `/player` и команды `/tick`.
+* **[Carpet-TIS-Addition](https://github.com/TISUnion/Carpet-TIS-Addition)** (команда [TIS-Union](https://github.com/TISUnion)) — лицензия LGPL-3.0. Точки перехвата в `Entity.move()`, `ItemEntity` и блочных событиях для логгеров `item`, `movement` и `microtiming`.
+* **[Capture & Playback](https://modrinth.com/mod/capture-playback)** (автор [G4me4u](https://github.com/G4me4u)) — сетевой протокол G4mespeed; хуки ядра в `ServerLevel` и инъекция редстоун-сигналов в `SignalGetter` написаны заново под GPL-3.0.
+
